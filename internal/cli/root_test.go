@@ -148,6 +148,7 @@ func TestCLIReturnsDefaultDBDirectoryCreationError(t *testing.T) {
 		t.Fatalf("write home file: %v", err)
 	}
 	t.Setenv("HOME", homeAsFile)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeAsFile, ".config"))
 	t.Setenv("APPSUMO_DB_PATH", "")
 
 	var out, errOut bytes.Buffer
