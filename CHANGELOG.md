@@ -13,3 +13,4 @@
 - Generate and shipcheck a CLI Printing Press baseline from the read-only OpenAPI contract.
 - Verify live AppSumo read-only smoke against the logged-in browser session without printing cookies.
 - Prepare the project for community use with public module path, CI, license, and security notes.
+- Require Go 1.26.3+ in CI and contributor checks so standard-library vulnerability scans stay clean.

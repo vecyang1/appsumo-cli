@@ -26,6 +26,8 @@ CSV and JSON exports always redact license/code fields.
 
 ## Build
 
+Requires Go 1.26.3 or newer.
+
 Install from source:
 
 ```bash
@@ -80,8 +82,10 @@ The generated baseline passed `cli-printing-press shipcheck --no-live-check` aga
 Local checks:
 
 ```bash
+go mod verify
 go test ./...
 go vet ./...
+govulncheck ./...
 go build -o ./appsumo ./cmd/appsumo
 ```
 
@@ -99,6 +103,7 @@ Keep the public CLI read-only and privacy-preserving. Do not add account-mutatin
 Run these before sending changes:
 
 ```bash
+go mod verify
 go test ./...
 go vet ./...
 govulncheck ./...
