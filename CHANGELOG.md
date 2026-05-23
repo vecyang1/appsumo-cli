@@ -12,3 +12,4 @@
 - Enforce SQLite `query_only` mode while running user SQL.
 - Generate and shipcheck a CLI Printing Press baseline from the read-only OpenAPI contract.
 - Verify live AppSumo read-only smoke against the logged-in browser session without printing cookies.
+- Prepare the project for community use with public module path, CI, license, and security notes.

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"appsumo-cli/internal/appsumo"
-	"appsumo-cli/internal/cli"
-	"appsumo-cli/internal/store"
+	"github.com/vecyang1/appsumo-cli/internal/appsumo"
+	"github.com/vecyang1/appsumo-cli/internal/cli"
+	"github.com/vecyang1/appsumo-cli/internal/store"
 )
 
 func TestCLIAuthProductsExportSyncSearchAndSQL(t *testing.T) {

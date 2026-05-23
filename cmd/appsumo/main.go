@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"appsumo-cli/internal/cli"
+	"github.com/vecyang1/appsumo-cli/internal/cli"
 )
 
 func main() {

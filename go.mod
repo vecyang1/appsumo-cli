@@ -1,4 +1,4 @@
-module appsumo-cli
+module github.com/vecyang1/appsumo-cli
 
 go 1.26.0
 

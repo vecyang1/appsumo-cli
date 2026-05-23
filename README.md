@@ -2,6 +2,8 @@
 
 Read-only AppSumo buyer-account CLI for auditing purchased products, redemption status, and local product search without exposing session cookies or license codes.
 
+This is an unofficial community tool. It is not affiliated with, endorsed by, or supported by AppSumo.
+
 ## Status
 
 This repository is intentionally read-only. The CLI does not refund, transfer, activate, change plans, check out, or mutate AppSumo account data.
@@ -23,6 +25,14 @@ The buyer-account endpoints AppSumo uses are session-cookie gated. The CLI accep
 CSV and JSON exports always redact license/code fields.
 
 ## Build
+
+Install from source:
+
+```bash
+go install github.com/vecyang1/appsumo-cli/cmd/appsumo@latest
+```
+
+Or build locally:
 
 ```bash
 go build -o ./appsumo ./cmd/appsumo
@@ -81,3 +91,15 @@ Live smoke, run from the logged-in Chrome session without printing cookies, veri
 - browser API product count matched CLI product count
 - CLI synced product count matched SQLite count
 - CSV export contained `[REDACTED]`
+
+## Contributing
+
+Keep the public CLI read-only and privacy-preserving. Do not add account-mutating commands, raw license-code output, unredacted exports, HAR files, or real buyer-account metadata to tracked files.
+
+Run these before sending changes:
+
+```bash
+go test ./...
+go vet ./...
+govulncheck ./...
+```

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"appsumo-cli/internal/appsumo"
-	"appsumo-cli/internal/store"
+	"github.com/vecyang1/appsumo-cli/internal/appsumo"
+	"github.com/vecyang1/appsumo-cli/internal/store"
 )
 
 func TestStoreUpsertSearchAndReadOnlySQL(t *testing.T) {

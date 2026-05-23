@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"appsumo-cli/internal/appsumo"
-	"appsumo-cli/internal/redact"
-	"appsumo-cli/internal/store"
+	"github.com/vecyang1/appsumo-cli/internal/appsumo"
+	"github.com/vecyang1/appsumo-cli/internal/redact"
+	"github.com/vecyang1/appsumo-cli/internal/store"
 
 	"github.com/spf13/cobra"
 )

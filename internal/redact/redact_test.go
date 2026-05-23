@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"appsumo-cli/internal/redact"
+	"github.com/vecyang1/appsumo-cli/internal/redact"
 )
 
 func TestCSVRedactsLicenseCodeColumnValues(t *testing.T) {

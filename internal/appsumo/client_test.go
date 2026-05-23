@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"appsumo-cli/internal/appsumo"
+	"github.com/vecyang1/appsumo-cli/internal/appsumo"
 )
 
 func TestFetchAllProductsPaginatesAndSendsCookie(t *testing.T) {

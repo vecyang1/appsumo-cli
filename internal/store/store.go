@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"appsumo-cli/internal/appsumo"
+	"github.com/vecyang1/appsumo-cli/internal/appsumo"
 	_ "modernc.org/sqlite"
 )
 
