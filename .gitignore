@@ -1,0 +1,14 @@
+.DS_Store
+/appsumo
+*.test
+coverage.out
+.gitnexus/
+.claude/skills/generated/
+
+# Local secrets and browser-derived auth material.
+.env
+*.cookie
+tmp/
+
+# Generated Printing Press baseline. Recreate from docs/openapi when needed.
+generated/
