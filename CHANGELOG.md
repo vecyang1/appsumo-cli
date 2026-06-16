@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-06-16
 
 - Initialize read-only AppSumo buyer-account CLI project.
 - Document AppSumo account endpoint discovery and CLI safety contract.
@@ -14,3 +14,4 @@
 - Verify live AppSumo read-only smoke against the logged-in browser session without printing cookies.
 - Prepare the project for community use with public module path, CI, license, and security notes.
 - Require Go 1.26.3+ in CI and contributor checks so standard-library vulnerability scans stay clean.
+- Document macOS Chrome cookie decryption helper and verify live sync (70 products successfully synced).

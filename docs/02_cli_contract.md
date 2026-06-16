@@ -24,6 +24,20 @@ The CLI may report whether auth is present, whether AppSumo accepted it, and whe
 
 Cookie headers may only be sent to `https://appsumo.com` or loopback test hosts. Base URL overrides must not forward real AppSumo cookies to arbitrary hosts.
 
+### macOS Chrome Cookie Decryption (Helper Reference)
+
+When running on macOS, AppSumo cookies (like `sid` and `csrftoken`) can be extracted from the user's Google Chrome profile using the following decryption rules:
+1. **Retrieve the Master Key**: Run `security find-generic-password -w -s "Chrome Safe Storage"` to get the Keychain password (a short base64 string; never paste it anywhere).
+2. **Derive the AES Key**: Use PBKDF2 with HMAC-SHA1:
+   * **Salt**: `b'saltysalt'`
+   * **Iterations**: `1003`
+   * **Key Length**: `16` bytes (AES-128)
+3. **Decrypt Ciphertext**:
+   * Chrome cookie database stores encrypted values with a `v10` prefix (`b'v10'`).
+   * The 16 bytes following the prefix are the true IV (`encrypted_value[3:19]`).
+   * The ciphertext starts at offset 19 (`encrypted_value[19:]`).
+   * Decrypt the ciphertext with the derived key and extracted IV using AES-CBC-128. After stripping PKCS7 padding, the decrypted value starts with a 16-byte garbage block (the decrypted IV block). Slice `[16:]` to get the clean UTF-8 string value.
+
 ## Commands
 
 ### `auth status`
