@@ -52,7 +52,7 @@ func (c *Client) AuthStatus(ctx context.Context) (*AuthStatus, error) {
 		} `json:"user"`
 	}
 	if err := c.getJSON(ctx, "/api/sessions/current/", nil, &raw); err != nil {
-		return nil, err
+		return nil, c.withAccountAuthHint(err)
 	}
 	return &AuthStatus{
 		HasCookie:     c.cookie != "",
@@ -66,7 +66,7 @@ func (c *Client) FetchProductsPage(ctx context.Context, page int) (*ProductsPage
 	}
 	var envelope ProductsEnvelope
 	if err := c.getJSON(ctx, "/api/v2/account/products/", map[string]string{"page": fmt.Sprintf("%d", page)}, &envelope); err != nil {
-		return nil, err
+		return nil, c.withAccountAuthHint(err)
 	}
 	return &envelope.Products, nil
 }
@@ -105,7 +105,7 @@ func (c *Client) FetchProductsCSV(ctx context.Context) ([]byte, error) {
 		return nil, readErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GET %s returned HTTP %d", req.URL.Path, resp.StatusCode)
+		return nil, c.withAccountAuthHint(fmt.Errorf("GET %s returned HTTP %d", req.URL.Path, resp.StatusCode))
 	}
 	return body, nil
 }
@@ -152,7 +152,13 @@ func (c *Client) getJSON(ctx context.Context, path string, query map[string]stri
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if !strings.Contains(strings.ToLower(contentType), "application/json") {
-		return fmt.Errorf("GET %s returned non-json content; session may be unauthenticated", req.URL.Path)
+		// Say only what every caller of this shared code shares. AppSumo answers
+		// an unauthenticated account request with an HTML sign-in page, so this
+		// usually is an auth problem — but `deals`, `reviews`, and `questions`
+		// route through here too and are never authenticated. Naming a cause
+		// three of the callers do not have sends those readers looking in the
+		// wrong place. The account commands attach the remedy themselves.
+		return fmt.Errorf("GET %s returned %s instead of json", req.URL.Path, describeContentType(contentType))
 	}
 	if err := json.Unmarshal(body, target); err != nil {
 		return fmt.Errorf("decode %s: %w", req.URL.Path, err)
@@ -186,6 +192,40 @@ func (c *Client) newRequest(ctx context.Context, method, path string, query map[
 	req.Header.Set("Accept", "application/json, text/csv;q=0.9, */*;q=0.1")
 	req.Header.Set("User-Agent", "appsumo-cli/0.1")
 	return req, nil
+}
+
+// describeContentType names what came back without echoing a whole HTML page
+// into an error string.
+func describeContentType(contentType string) string {
+	contentType = strings.TrimSpace(strings.Split(contentType, ";")[0])
+	if contentType == "" {
+		return "an untyped response"
+	}
+	return contentType
+}
+
+// accountAuthHint explains how to supply a session for the account surface, and
+// is attached only by the commands that actually need one.
+//
+// It names the two sources rt.cookie() reads, in that order. Read this as the
+// user does: they ran a command, it failed, and this line is the only place the
+// next step can come from.
+func (c *Client) accountAuthHint() string {
+	if c.cookie == "" {
+		return "no AppSumo session cookie is configured; set APPSUMO_COOKIE " +
+			"or pass --cookie-file <path> pointing at a file containing a full Cookie header"
+	}
+	return "the configured AppSumo session cookie was not accepted; it has probably expired, " +
+		"so refresh it from a logged-in browser session"
+}
+
+// withAccountAuthHint wraps an account-endpoint failure with the remedy. Public
+// surfaces must never call it.
+func (c *Client) withAccountAuthHint(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w\n%s", err, c.accountAuthHint())
 }
 
 func shouldSendCookie(target *url.URL) bool {

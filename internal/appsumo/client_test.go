@@ -3,6 +3,7 @@ package appsumo_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -232,5 +233,61 @@ func jsonResponse(status int, body string) *http.Response {
 		StatusCode: status,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// TestErrorsNameOnlyWhatTheirCallerShares is the guard for a message raised from
+// shared code. Every command routes through getJSON, so an auth diagnosis
+// written there is printed verbatim by `deals`, `reviews`, and `questions`,
+// which are never authenticated. A reader who ran a public command and is told
+// their session may be unauthenticated stops before the line that would have
+// helped — a right answer under a wrong question does not get read.
+func TestErrorsNameOnlyWhatTheirCallerShares(t *testing.T) {
+	// Answers every request with an HTML sign-in page, as AppSumo does.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<html><body>Sign in</body></html>`)
+	}))
+	defer server.Close()
+
+	noCookie := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+
+	// A public surface must not be told anything about credentials.
+	_, _, err := noCookie.FetchDealsPage(context.Background(), 1, 10, "newest")
+	if err == nil {
+		t.Fatal("a public catalog request accepted an HTML response")
+	}
+	for _, forbidden := range []string{"cookie", "Cookie", "unauthenticated", "session", "APPSUMO_COOKIE"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Errorf("public catalog error mentions %q, which is not this caller's problem: %v", forbidden, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "instead of json") {
+		t.Errorf("public catalog error did not say what came back: %v", err)
+	}
+
+	// The account surface must carry a remedy, and it must name a real source.
+	_, err = noCookie.AuthStatus(context.Background())
+	if err == nil {
+		t.Fatal("an account request accepted an HTML response")
+	}
+	if !strings.Contains(err.Error(), "APPSUMO_COOKIE") || !strings.Contains(err.Error(), "--cookie-file") {
+		t.Errorf("account error gave no usable remedy: %v", err)
+	}
+
+	// With a cookie configured, "none is configured" would be false. The two
+	// states need different remedies because the user's next action differs.
+	withCookie := appsumo.NewClient(appsumo.ClientOptions{
+		BaseURL: server.URL, Cookie: "fixture-cookie-header", HTTPClient: server.Client(),
+	})
+	_, err = withCookie.AuthStatus(context.Background())
+	if err == nil {
+		t.Fatal("an account request accepted an HTML response")
+	}
+	if strings.Contains(err.Error(), "no AppSumo session cookie is configured") {
+		t.Errorf("told a user with a configured cookie that they have none: %v", err)
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Errorf("a rejected cookie was not diagnosed as expired: %v", err)
 	}
 }

@@ -25,11 +25,17 @@ package cli_test
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/vecyang1/appsumo-cli/internal/cli"
 )
 
 // backtickedLiteral matches a backticked run of 20+ characters drawn only from
@@ -171,4 +177,87 @@ func TestCredentialShapeVectors(t *testing.T) {
 			t.Errorf("ordinary documentation text was flagged as a credential: %q", literal)
 		}
 	}
+}
+
+// TestErrorRemediesNameRealFlags is the decidable slice of "read your error
+// strings as the user": if a message tells someone to pass a flag, the parser
+// has to define that flag. Wording and tone stay in review; a remedy that
+// cannot be followed does not.
+func TestErrorRemediesNameRealFlags(t *testing.T) {
+	root := cli.NewRoot(cli.Options{Out: io.Discard, Err: io.Discard})
+	flagPattern := regexp.MustCompile(`--[a-z][a-z0-9-]+`)
+
+	graded := 0
+	for _, file := range goSources(t, repoRoot(t)) {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, message := range errorMessageLiterals(string(body)) {
+			for _, flag := range flagPattern.FindAllString(message, -1) {
+				graded++
+				name := strings.TrimPrefix(flag, "--")
+				if root.PersistentFlags().Lookup(name) != nil {
+					continue
+				}
+				if commandDefinesFlag(root, name) {
+					continue
+				}
+				t.Errorf("%s raises an error naming %s, which no command defines", file, flag)
+			}
+		}
+	}
+	t.Logf("graded %d flag references inside error messages", graded)
+}
+
+// errorMessageLiterals pulls the format strings out of fmt.Errorf calls.
+var errorfPattern = regexp.MustCompile(`fmt\.Errorf\(\s*"((?:[^"\\]|\\.)*)"`)
+
+func errorMessageLiterals(source string) []string {
+	var messages []string
+	for _, match := range errorfPattern.FindAllStringSubmatch(source, -1) {
+		messages = append(messages, match[1])
+	}
+	// Remedies are sometimes built as plain strings rather than at the raise
+	// site; catch the ones that read like instructions.
+	for _, line := range strings.Split(source, "\n") {
+		if strings.Contains(line, "pass --") || strings.Contains(line, "run `appsumo") {
+			messages = append(messages, line)
+		}
+	}
+	return messages
+}
+
+func commandDefinesFlag(root *cobra.Command, name string) bool {
+	found := false
+	var walk func(cmd *cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		if cmd.Flags().Lookup(name) != nil || cmd.PersistentFlags().Lookup(name) != nil {
+			found = true
+		}
+		for _, child := range cmd.Commands() {
+			walk(child)
+		}
+	}
+	walk(root)
+	return found
+}
+
+func goSources(t *testing.T, root string) []string {
+	t.Helper()
+	command := exec.Command("git", "ls-files", "*.go")
+	command.Dir = root
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("git ls-files *.go: %v", err)
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasSuffix(line, "_test.go") {
+			continue
+		}
+		files = append(files, filepath.Join(root, line))
+	}
+	return files
 }
