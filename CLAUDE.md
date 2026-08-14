@@ -45,3 +45,30 @@ This project is indexed by GitNexus as **26.05.23-appsumo-cli** (379 symbols, 90
 | Work in the Redact area (7 symbols) | `.claude/skills/generated/redact/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+# Public Surfaces
+
+`appsumo reviews`, `appsumo questions`, and `appsumo deals` read **public** endpoints and
+must never carry the session cookie. They route through `Client.public()` and
+`runtime.publicClient()`, neither of which consults any cookie source.
+
+Before touching pagination on any of them, read
+[docs/03_reviews_api_discovery.md](docs/03_reviews_api_discovery.md) and
+[docs/04_catalog_and_questions_discovery.md](docs/04_catalog_and_questions_discovery.md).
+Each endpoint hides a parameter that lies, and all three failures are silent — HTTP 200 with
+a healthy-looking `meta` on every request:
+
+- Reviews and questions accept `page` and ignore it; `from` is the real offset. Guards:
+  `TestFetchAllReviewsStopsWhenOffsetIsIgnored`, `TestFetchAllQuestionsInheritsTheOffsetGuard`.
+- The catalog needs a `sort` present or a full walk returns 305 of 363 declared deals. The
+  sort *value* is ignored. Guard: `TestFetchAllDealsAlwaysSendsSort`.
+- `/products/<slug>/reviews/?page=N` is statically generated and serves the same five reviews
+  at every page number.
+
+# Fields That Are Populated And Wrong
+
+`is_redeemed` is `false` on all 70 products of a live account including the 36 activated ones;
+`percent_claimed` is `-1` on all 363 catalog deals; `codes_remaining` is `0` on 152 deals that
+do not sell codes; `has_ended` is `false` on every deal the catalog serves. Use `redeem_date`,
+report the rest as unknown, and keep `*int`/`*bool` nil rather than zero — including through
+SQLite. See `AGENTS.md` for the full table.

@@ -21,6 +21,54 @@ Use ignored `tmp/` files for local auth handoff during smoke tests, and delete t
 
 Only send AppSumo cookies to `https://appsumo.com` or loopback test hosts. Do not make base URL overrides capable of forwarding real cookies to arbitrary hosts.
 
+## Public Surfaces
+
+Three surfaces are public and must never carry the buyer's session cookie:
+
+| Surface | Endpoint | Command |
+|---|---|---|
+| Reviews | `GET /api/v2/deals/{deal_id}/reviews/` | `appsumo reviews` |
+| Questions | `GET /api/v2/deals/{deal_id}/questions/` | `appsumo questions` |
+| Catalog | `GET /api/v2/deals/esbrowse/` | `appsumo deals` |
+
+Code reaching them must route through `Client.public()`, which strips the cookie, and the
+commands must not consult any cookie source at all — `runtime.publicClient()` exists so that
+this is structural rather than a convention. Attaching buyer credentials to a public crawl
+leaks identity and changes per-user fields in the response.
+
+### Every one of these endpoints hides a parameter that lies
+
+Each has been measured live; do not re-derive by reading the site's own pager.
+
+- **Reviews and questions accept `page` and ignore it.** `from` is the real offset. Covered by
+  `TestFetchAllReviewsStopsWhenOffsetIsIgnored` and
+  `TestFetchAllQuestionsInheritsTheOffsetGuard`. See `docs/03_reviews_api_discovery.md`.
+- **The catalog needs `sort` or it loses rows.** `page` works, but only with a `sort` present:
+  without it a full walk returned 305 of 363 declared deals, with 58 duplicates and no error.
+  The sort *value* is ignored. Covered by `TestFetchAllDealsAlwaysSendsSort`.
+- **`search_after` on catalog rows is not a usable cursor.** Sending it returns page one.
+
+Any new pagination code needs a test that fails when the parameter is ignored, and a
+reconciliation against a count the endpoint did not produce itself.
+
+### Fields that are populated and meaningless
+
+Reading these naively produces a specific, plausible, wrong answer, which is worse than a
+crash because the user acts on it. Measured across the full live surface:
+
+| Field | Where | Live value | Use instead |
+|---|---|---|---|
+| `is_redeemed` | account products | `false` on 70 of 70, including all 36 activated | `redeem_date` — see `Product.Redemption()` |
+| `percent_claimed` | catalog | `-1` on 363 of 363 | nothing; report unknown |
+| `codes_remaining` | catalog | `0` on 152 deals, all with `uses_codes: false` | only meaningful when `uses_codes` is true |
+| `has_ended` | catalog | `false` on 363 of 363 | disappearing from the catalog |
+
+The convention throughout is that a `*int` / `*bool` staying nil means "the API did not state
+a value". Do not collapse those to zero anywhere, including in SQLite columns — the store has
+a round-trip test for exactly that (`TestDealSnapshotRoundTripKeepsUnknownsUnknown`).
+
+Details in `docs/04_catalog_and_questions_discovery.md`.
+
 ## Printing Press
 
 Use CLI Printing Press as the generator path for the discovered read-only API contract. Keep the generated baseline under ignored `generated/` and keep hand-authored safety wrappers in the root module.
@@ -41,12 +89,23 @@ Before claiming completion, run:
 ```bash
 go test ./...
 go vet ./...
+./scripts/install_smoke.sh
 rm -rf generated/appsumo-account-pp-cli
 cli-printing-press generate --spec docs/openapi/appsumo-account.openapi.yaml --name appsumo-account --output generated/appsumo-account-pp-cli --spec-source browser-sniffed --transport browser-http --json
 cli-printing-press shipcheck --dir generated/appsumo-account-pp-cli --spec docs/openapi/appsumo-account.openapi.yaml --no-live-check --json
 ```
 
 Then run a tracked-file secret scan. Live smoke tests must use the logged-in browser session without printing cookies.
+
+`TestTrackedMarkdownHasNoCredentialShapedLiterals` scans every git-known Markdown file for
+credential-shaped example values, because prose is the one place the cookie and redaction
+rules above do not look — a real Chrome Safe Storage key reached a release commit that way.
+When it fires, replace the value with an obvious placeholder rather than widening the
+allowlist.
+
+Secret scans report verdicts, not bodies: use `grep -rl` or `grep -rc`, never `grep -n`, when
+the pattern is a secret's name. `-n` prints the matching line, which puts the value into the
+terminal and the session log — the check succeeds and the exposure happens anyway.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
