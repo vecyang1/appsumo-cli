@@ -190,8 +190,10 @@ func queryRows(ctx context.Context, conn *sql.Conn, query string) ([]map[string]
 	return out, nil
 }
 
-func (db *DB) init(ctx context.Context) error {
-	_, err := db.db.ExecContext(ctx, `create table if not exists products (
+// schemas are applied in order on every Open. Each is idempotent, so adding a
+// table here is the whole migration.
+var schemas = []string{
+	`create table if not exists products (
 		id integer,
 		uuid text primary key,
 		invoice_uuid text,
@@ -204,8 +206,18 @@ func (db *DB) init(ctx context.Context) error {
 		redeem_date text,
 		raw_json text not null,
 		updated_at text not null
-	)`)
-	return err
+	)`,
+	dealsSchema,
+	threadsSchema,
+}
+
+func (db *DB) init(ctx context.Context) error {
+	for index, schema := range schemas {
+		if _, err := db.db.ExecContext(ctx, schema); err != nil {
+			return fmt.Errorf("apply schema %d: %w", index, err)
+		}
+	}
+	return nil
 }
 
 func validateReadOnlyQuery(query string) error {
@@ -219,7 +231,10 @@ func validateReadOnlyQuery(query string) error {
 			return fmt.Errorf("only read-only select queries are allowed")
 		}
 	}
-	if !strings.HasPrefix(lower, "select ") && lower != "select" {
+	// Match the first token rather than the literal "select ", so a query
+	// formatted across lines is not rejected for having a newline where the
+	// check expected a space.
+	if fields := strings.Fields(lower); len(fields) == 0 || fields[0] != "select" {
 		return fmt.Errorf("only select queries are allowed")
 	}
 	withoutFinalSemicolon := strings.TrimSuffix(lower, ";")

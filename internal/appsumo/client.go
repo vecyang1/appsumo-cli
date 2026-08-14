@@ -110,6 +110,29 @@ func (c *Client) FetchProductsCSV(ctx context.Context) ([]byte, error) {
 	return body, nil
 }
 
+// getHTML reads a rendered page body. Public product pages embed their data as
+// a __NEXT_DATA__ island, which is the only published source for a slug's deal id.
+func (c *Client) getHTML(ctx context.Context, path string) ([]byte, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, readErr := readBody(resp.Body, maxResponseBodyBytes)
+	if readErr != nil {
+		return nil, readErr
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("GET %s returned HTTP %d", req.URL.Path, resp.StatusCode)
+	}
+	return body, nil
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, query map[string]string, target any) error {
 	req, err := c.newRequest(ctx, http.MethodGet, path, query)
 	if err != nil {

@@ -59,3 +59,25 @@ func TestQueryReadOnlyRejectsWrites(t *testing.T) {
 		t.Fatalf("expected write query rejection")
 	}
 }
+
+// A multi-line SELECT is the normal shape for anything worth querying. The guard
+// used to test for the literal "select " and rejected a query whose first
+// whitespace was a newline.
+func TestQueryReadOnlyAcceptsMultiLineSelect(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	query := "select\n  status,\n  count(*) as n\nfrom products\ngroup by status"
+	if _, err := db.QueryReadOnly(ctx, query); err != nil {
+		t.Fatalf("multi-line select was rejected: %v", err)
+	}
+
+	// Widening the first-token check must not let a write through on a newline.
+	if _, err := db.QueryReadOnly(ctx, "delete\n  from products"); err == nil {
+		t.Fatal("multi-line delete was accepted")
+	}
+}

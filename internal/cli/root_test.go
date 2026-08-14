@@ -201,12 +201,20 @@ func newFixtureServer(t *testing.T) *httptest.Server {
 			page := r.URL.Query().Get("page")
 			if page == "" || page == "1" {
 				writeJSON(t, w, productsEnvelope(2, server.URL+"/api/v2/account/products/?page=2", nil, []map[string]any{{
+					// is_redeemed false alongside a populated redeem_date is what the
+					// live API actually sends on every redeemed product. A fixture
+					// that omitted these fields could not exercise the defect the
+					// portfolio rollup exists to work around.
 					"id": 1, "uuid": "u1", "invoice_uuid": "i1", "name": "Letterly", "slug": "letterly", "status": "activated", "plan_name": "Tier 1", "support_email": "fixture-support-contact",
+					"is_redeemed": false, "redeem_date": "2025-11-25T00:00:00Z", "purchase_date": "2025-11-24",
+					"has_active_license": true, "can_transfer_license": true, "is_refundable": false,
 				}}))
 				return
 			}
 			writeJSON(t, w, productsEnvelope(2, nil, server.URL+"/api/v2/account/products/?page=1", []map[string]any{{
 				"id": 2, "uuid": "u2", "invoice_uuid": "i2", "name": "Buildfast", "slug": "buildfast", "status": "expired", "plan_name": "Tier 2",
+				"is_redeemed": false, "redeem_date": "2023-05-06T00:00:00Z", "purchase_date": "2023-05-05",
+				"has_active_license": false, "can_transfer_license": false, "is_refundable": false,
 			}}))
 		case "/api/v2/account/products/download/":
 			w.Header().Set("Content-Type", "text/csv")
