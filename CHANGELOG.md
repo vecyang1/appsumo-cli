@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-08-14
 
 ### Added
 
@@ -35,12 +35,12 @@
 
 ### Security
 
+- Replace the worked example in the macOS cookie-decryption reference with a placeholder. The release commit documented `security find-generic-password -s "Chrome Safe Storage"` with its real output — a key that decrypts every cookie in the machine's Chrome profile, in a repository whose remote is public. It was caught before the commit was ever pushed, and `TestTrackedMarkdownHasNoCredentialShapedLiterals` now guards documentation prose, which is the one place the cookie and redaction rules do not look.
 - Raise the Go floor from 1.26.3 to 1.26.6. go1.26.3 carries seven standard-library vulnerabilities this CLI reaches — `GO-2026-6218` (`net/url`), `GO-2026-6090` and `GO-2026-5856` (`crypto/tls`), `GO-2026-5972` (`encoding/asn1`), `GO-2026-5039` (`net/textproto`), `GO-2026-5037` (`crypto/x509`), and `GO-2026-5026` (`net/http`) — all fixed by 1.26.6. CI installs the exact version in the `go` directive, so the directive is the floor that matters.
 
 ### Internal
 
 - Update `modernc.org/sqlite` from v1.50.1 to v1.56.0, with `golang.org/x/sys` and `modernc.org/libc` following. Full suite, install smoke, and a live catalog/review/portfolio run re-verified on the new driver.
-
 - Add a test-binary database sandbox so a CLI test that omits `DBPath` cannot write to the developer's real account database, plus an after-run backstop that fails the suite if it did.
 - Add `TestTrackedMarkdownHasNoCredentialShapedLiterals`, which scans every git-known Markdown file for credential-shaped example values. A real Chrome Safe Storage key had reached a release commit as documentation prose, where no cookie or redaction check looks.
 - Widen the documented-command gate from the repository root and `docs/` to every git-known Markdown file: 9 files and 22 commands became 17 files and 51 commands.
