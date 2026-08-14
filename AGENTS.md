@@ -97,6 +97,19 @@ cli-printing-press generate --spec docs/openapi/appsumo-account.openapi.yaml --n
 cli-printing-press shipcheck --dir generated/appsumo-account-pp-cli --spec docs/openapi/appsumo-account.openapi.yaml --no-live-check --json
 ```
 
+A local `govulncheck` pass proves nothing unless your toolchain matches `go.mod`.
+CI installs the exact version in the `go` directive, so a newer local Go silently
+scans a different standard library than the one that ships. Check before trusting
+a green local run:
+
+```bash
+go version && grep '^go ' go.mod
+```
+
+Measured 2026-08-14: a local scan on go1.26.6 was clean while CI, on the pinned
+go1.26.3, reported seven reachable standard-library vulnerabilities. The fix is to
+raise the directive, not to silence the scan.
+
 Then run a tracked-file secret scan. Live smoke tests must use the logged-in browser session without printing cookies.
 
 `TestTrackedMarkdownHasNoCredentialShapedLiterals` scans every git-known Markdown file for

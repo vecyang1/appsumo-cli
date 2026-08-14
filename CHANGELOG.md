@@ -33,6 +33,10 @@
 
 - Share the offset crawl between reviews and questions (`internal/appsumo/threads.go`), so the duplicate-window guard and the reconciliation against `meta.total` protect both surfaces.
 
+### Security
+
+- Raise the Go floor from 1.26.3 to 1.26.6. go1.26.3 carries seven standard-library vulnerabilities this CLI reaches — `GO-2026-6218` (`net/url`), `GO-2026-6090` and `GO-2026-5856` (`crypto/tls`), `GO-2026-5972` (`encoding/asn1`), `GO-2026-5039` (`net/textproto`), `GO-2026-5037` (`crypto/x509`), and `GO-2026-5026` (`net/http`) — all fixed by 1.26.6. CI installs the exact version in the `go` directive, so the directive is the floor that matters.
+
 ### Internal
 
 - Update `modernc.org/sqlite` from v1.50.1 to v1.56.0, with `golang.org/x/sys` and `modernc.org/libc` following. Full suite, install smoke, and a live catalog/review/portfolio run re-verified on the new driver.

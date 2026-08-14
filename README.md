@@ -139,7 +139,12 @@ ignores it — the real offset is `from`. See
 
 ## Build
 
-Requires Go 1.26.3 or newer.
+Requires Go 1.26.6 or newer.
+
+The floor is a security floor, not a language-feature one: go1.26.3 carries seven
+standard-library vulnerabilities this CLI reaches through `net/http`, `crypto/tls`,
+and `net/url`, all fixed by go1.26.6. CI installs exactly the version in `go.mod`,
+so raising that directive is what keeps the vulnerability scan honest.
 
 Install from source:
 
