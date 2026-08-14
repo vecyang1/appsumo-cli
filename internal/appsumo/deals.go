@@ -155,12 +155,19 @@ type Deal struct {
 }
 
 // DealsResult is a full catalog walk plus everything needed to judge it.
+//
+// Sort and PageSize are what the walk actually sent, not what the caller asked
+// for. On this endpoint that distinction decides whether the result is
+// trustworthy: a blank sort is substituted, and a report echoing the blank would
+// label a complete walk with the setting that loses 16% of the catalog.
 type DealsResult struct {
 	Deals         []Deal
 	DeclaredTotal *int
 	Requests      int
 	Truncated     bool
 	Warnings      []string
+	Sort          string
+	PageSize      int
 }
 
 // Complete reports whether the walk collected exactly as many deals as the
@@ -267,9 +274,15 @@ func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, li
 	if perPage <= 0 {
 		perPage = DefaultDealsPageSize
 	}
-	result := &DealsResult{}
+	sort = firstNonBlank(sort, DefaultDealsSort)
+	result := &DealsResult{Warnings: []string{}, Sort: sort, PageSize: perPage}
 	seen := make(map[string]struct{})
 	duplicates := 0
+
+	// See fetchThread: a caller-requested cap is expected and must not warn about
+	// its own short count, while an anomaly-triggered stop should report the
+	// shortfall. Both mark the walk Truncated.
+	cappedOnPurpose := false
 
 	for page := 1; page <= maxDealsRequests; page++ {
 		deals, meta, err := c.FetchDealsPage(ctx, page, perPage, sort)
@@ -305,13 +318,23 @@ func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, li
 
 		if limit > 0 && len(result.Deals) >= limit {
 			result.Truncated = true
+			cappedOnPurpose = true
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
 				"stopped at --limit %d; more deals exist", limit))
 			break
 		}
 		// A page of slugs we already hold means the ordering is not stable and
 		// paging further would keep re-reading the same window.
+		//
+		// Truncated is set here for the same reason it is set on the other two
+		// early exits: the walk stopped for a reason other than exhausting the
+		// catalog. Without it, Complete() would fall back to comparing the
+		// collected count against a total supplied by the very response stream
+		// that just proved it re-serves windows — and a coincidental match would
+		// report a walk that hit a known anomaly as verified. `deals sync` then
+		// persists it, and the next diff calls the missing deals gone.
 		if added == 0 {
+			result.Truncated = true
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
 				"page %d returned %d deals but no new slugs; the catalog ordering is unstable — walk stopped early",
 				page, len(deals)))
@@ -324,6 +347,7 @@ func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, li
 
 	if result.Requests >= maxDealsRequests {
 		result.Truncated = true
+		cappedOnPurpose = true
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"stopped after the %d request safety cap", maxDealsRequests))
 	}
@@ -335,7 +359,7 @@ func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, li
 	case result.DeclaredTotal == nil:
 		result.Warnings = append(result.Warnings,
 			"catalog carried no meta.total_results; completeness could not be verified")
-	case !result.Truncated && len(result.Deals) != *result.DeclaredTotal:
+	case !cappedOnPurpose && len(result.Deals) != *result.DeclaredTotal:
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"collected %d deals but the catalog declared %d; %d rows were never served",
 			len(result.Deals), *result.DeclaredTotal, *result.DeclaredTotal-len(result.Deals)))

@@ -65,8 +65,11 @@ func (rt *runtime) dealsListCmd() *cobra.Command {
 					Complete:      result.Complete(),
 					Requests:      result.Requests,
 					Truncated:     result.Truncated,
-					Sort:          sort,
-					PageSize:      pageSize,
+					// Echo what the walk sent, not what was typed: an empty
+					// --sort is substituted, and reporting the empty string
+					// would describe a complete walk as the broken kind.
+					Sort:     result.Sort,
+					PageSize: result.PageSize,
 				},
 				Warnings: result.Warnings,
 				Deals:    result.Deals,

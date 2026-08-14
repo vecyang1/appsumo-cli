@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,7 +69,11 @@ func TestSandboxDatabasePathIsSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve sandbox directory: %v", err)
 	}
-	if !filepath.HasPrefix(resolved, tempRoot) {
+	// filepath.Rel rather than a string prefix: "/tmp-other" has "/tmp" as a
+	// string prefix but is not inside it, and filepath.HasPrefix is deprecated
+	// for exactly that reason.
+	relative, err := filepath.Rel(tempRoot, resolved)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		t.Fatalf("sandbox database %s is not under the temp directory %s", resolved, tempRoot)
 	}
 }

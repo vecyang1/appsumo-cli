@@ -90,6 +90,9 @@ type ReviewsResult struct {
 	Requests      int
 	Truncated     bool
 	Warnings      []string
+
+	// Effective is what the crawl actually sent after defaults were applied.
+	Effective ThreadQuery
 }
 
 // ResolveProduct maps a product slug to the deal id the reviews API is keyed on,
@@ -192,5 +195,6 @@ func (c *Client) FetchAllReviews(ctx context.Context, query ReviewsQuery, limit 
 		Requests:      crawl.Requests,
 		Truncated:     crawl.Truncated,
 		Warnings:      crawl.Warnings,
+		Effective:     crawl.Effective,
 	}, nil
 }

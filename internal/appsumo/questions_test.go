@@ -162,3 +162,38 @@ func TestFetchAllQuestionsHonoursLimit(t *testing.T) {
 		t.Fatalf("truncation was not announced: truncated=%v warnings=%v", result.Truncated, result.Warnings)
 	}
 }
+
+// The shared crawl must not certify a thread walk that stopped on the ignored-
+// offset anomaly, even when the collected count happens to match meta.total.
+func TestFetchAllQuestionsWillNotCertifyAnAnomalousCrawl(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		from, _ := strconv.Atoi(r.URL.Query().Get("from"))
+		if from >= 5 {
+			from = 0 // ignore the offset, exactly as the live decoy does
+		}
+		comments := []map[string]any{}
+		for i := from; i < 5; i++ {
+			comments = append(comments, questionFixture(3000+i))
+		}
+		writeJSON(t, w, map[string]any{
+			"comments": comments,
+			"meta":     map[string]any{"total": 5, "count": len(comments)},
+		})
+	}))
+	defer server.Close()
+
+	client := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+	result, err := client.FetchAllQuestions(context.Background(), appsumo.ThreadQuery{DealID: 1, PageSize: 5}, 0)
+	if err != nil {
+		t.Fatalf("FetchAllQuestions returned error: %v", err)
+	}
+	if len(result.Questions) != 5 || result.ExpectedTotal == nil || *result.ExpectedTotal != 5 {
+		t.Fatalf("precondition wrong: %d of %v", len(result.Questions), result.ExpectedTotal)
+	}
+	if !result.Truncated {
+		t.Fatal("a crawl that stopped on the ignored-offset anomaly was not marked truncated")
+	}
+	if !hasWarningContaining(result.Warnings, "ignore `from`") {
+		t.Fatalf("the anomaly was not announced: %v", result.Warnings)
+	}
+}

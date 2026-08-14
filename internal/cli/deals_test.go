@@ -239,3 +239,50 @@ func TestCLIDealsDiffNeedsTwoSnapshots(t *testing.T) {
 		t.Fatalf("error gave no usable remedy: %v", err)
 	}
 }
+
+// TestCLIReportsTheParametersItActuallySent pins the label on the result.
+//
+// `--sort ""` is substituted with the default, so the walk is complete. Echoing
+// the empty string back would describe that complete walk with the one setting
+// known to lose 16% of the catalog — a result reported under a label the run
+// does not deserve. The same applies to a zero page size.
+func TestCLIReportsTheParametersItActuallySent(t *testing.T) {
+	server := catalogFixtureServer(t, pagedCatalog(120), 120)
+	defer server.Close()
+
+	out := runCLI(t, cli.Options{
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
+		DBPath:     filepath.Join(t.TempDir(), "appsumo.db"),
+	}, "deals", "list", "--sort", "", "--page-size", "0", "--json")
+
+	var report struct {
+		Fetch struct {
+			Sort     string `json:"sort"`
+			PageSize int    `json:"page_size"`
+			Complete *bool  `json:"complete"`
+		} `json:"fetch"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("deals list --json is not valid JSON: %v\n%s", err, out)
+	}
+	if report.Fetch.Sort == "" {
+		t.Fatal("a complete walk reported sort=\"\", the setting that loses rows")
+	}
+	if report.Fetch.Sort != "newest" {
+		t.Fatalf("sort reported as %q, want the substituted default", report.Fetch.Sort)
+	}
+	if report.Fetch.PageSize != 100 {
+		t.Fatalf("page_size reported as %d, want the substituted default", report.Fetch.PageSize)
+	}
+	if report.Fetch.Complete == nil || !*report.Fetch.Complete {
+		t.Fatalf("complete = %v, want true", report.Fetch.Complete)
+	}
+
+	// An empty warnings list must serialise as [], not null: a consumer doing
+	// len(warnings) should not have to special-case healthy output.
+	if !strings.Contains(out, `"warnings": []`) {
+		t.Fatalf("empty warnings did not serialise as an array: %s", out)
+	}
+}

@@ -63,6 +63,9 @@ type QuestionsResult struct {
 	Requests      int
 	Truncated     bool
 	Warnings      []string
+
+	// Effective is what the crawl actually sent after defaults were applied.
+	Effective ThreadQuery
 }
 
 // Answered reports whether a question thread has at least one reply. It is a
@@ -101,5 +104,6 @@ func (c *Client) FetchAllQuestions(ctx context.Context, query ThreadQuery, limit
 		Requests:      crawl.Requests,
 		Truncated:     crawl.Truncated,
 		Warnings:      crawl.Warnings,
+		Effective:     crawl.Effective,
 	}, nil
 }

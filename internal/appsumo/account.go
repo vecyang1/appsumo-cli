@@ -111,6 +111,7 @@ func Summarise(products []Product) PortfolioSummary {
 
 	datedButFlagFalse := 0
 	flaggedWithoutDate := 0
+	unreadable := map[string]int{}
 	for _, product := range products {
 		status := strings.TrimSpace(product.Status)
 		if status == "" {
@@ -130,15 +131,14 @@ func Summarise(products []Product) PortfolioSummary {
 		if plan := strings.TrimSpace(product.PlanName); plan != "" {
 			summary.ByListingPlan[plan]++
 		}
-		if boolOf(product.HasActiveLicense) {
-			summary.ActiveLicenses++
-		}
-		if boolOf(product.CanTransferLicense) {
-			summary.Transferable++
-		}
-		if boolOf(product.IsRefundable) {
-			summary.Refundable++
-		}
+		// These three are printed as headline facts, so an unreadable field must
+		// not quietly become a "no". boolOf answers false for an absent or
+		// unrecognised value, which is the right default only when false means
+		// "did not state true" — and a headline count is exactly where it would
+		// instead read as evidence for the negative.
+		countFlag(product.HasActiveLicense, &summary.ActiveLicenses, &unreadable, "has_active_license")
+		countFlag(product.CanTransferLicense, &summary.Transferable, &unreadable, "can_transfer_license")
+		countFlag(product.IsRefundable, &summary.Refundable, &unreadable, "is_refundable")
 		switch {
 		case boolOf(product.IsRedeemed) && state != Redeemed:
 			flaggedWithoutDate++
@@ -173,11 +173,33 @@ func Summarise(products []Product) PortfolioSummary {
 			"is_redeemed is true on %d products with no redeem_date; the flag and the date now disagree in both directions",
 			flaggedWithoutDate))
 	}
+	for _, field := range []string{"has_active_license", "can_transfer_license", "is_refundable"} {
+		if count := unreadable[field]; count > 0 {
+			summary.Warnings = append(summary.Warnings, fmt.Sprintf(
+				"%s was unreadable on %d of %d products; the count above is a floor, not a total",
+				field, count, len(products)))
+		}
+	}
 	if len(products) == 0 {
 		summary.Warnings = append(summary.Warnings,
 			"no synced products; run `appsumo sync` first")
 	}
 	return summary
+}
+
+// countFlag increments total when the flag is true, and records the field as
+// unreadable when the value is absent or of a shape boolOf does not understand.
+// The distinction is the whole point: "false" and "could not tell" are different
+// answers, and only one of them belongs in a printed count.
+func countFlag(value any, total *int, unreadable *map[string]int, field string) {
+	enabled, ok := readBool(value)
+	if !ok {
+		(*unreadable)[field]++
+		return
+	}
+	if enabled {
+		*total++
+	}
 }
 
 func stringOf(value any) string {
@@ -190,27 +212,37 @@ func stringOf(value any) string {
 	return fmt.Sprint(value)
 }
 
-// boolOf reads a JSON field that AppSumo encodes as a bool, a number, or a
-// string depending on the endpoint. An unreadable value is false, which is safe
-// here only because every caller treats false as "did not state true" and never
-// as evidence for the negative.
-func boolOf(value any) bool {
+// readBool reads a JSON field that AppSumo encodes as a bool, a number, or a
+// string depending on the endpoint. The second return distinguishes "the source
+// said false" from "there was nothing readable here" — an absent field is what a
+// rename looks like, and it decodes into a nil `any` without any error.
+func readBool(value any) (bool, bool) {
 	switch typed := value.(type) {
 	case nil:
-		return false
+		return false, false
 	case bool:
-		return typed
+		return typed, true
 	case float64:
-		return typed != 0
+		return typed != 0, true
 	case int:
-		return typed != 0
+		return typed != 0, true
 	case string:
 		switch strings.ToLower(strings.TrimSpace(typed)) {
 		case "true", "1", "yes":
-			return true
+			return true, true
+		case "false", "0", "no", "":
+			return false, true
 		}
-		return false
+		return false, false
 	default:
-		return false
+		return false, false
 	}
+}
+
+// boolOf is the two-state view, for the one caller that only needs to know
+// whether the source positively asserted true: the is_redeemed drift check,
+// which treats every other outcome as "did not say true".
+func boolOf(value any) bool {
+	enabled, ok := readBool(value)
+	return ok && enabled
 }

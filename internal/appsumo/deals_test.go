@@ -296,3 +296,81 @@ func TestDiffDealsDoesNotInventChangesFromUnknowns(t *testing.T) {
 		t.Fatalf("unknown-to-known transition not reported cleanly: %#v", appeared)
 	}
 }
+
+// TestFetchAllDealsWillNotCertifyAnAnomalousWalk is the case a code review
+// constructed and the first implementation got wrong.
+//
+// The server declares 120 and serves all 120, then re-serves an already-seen
+// window instead of an empty page — the unstable-ordering signature. The
+// collected count matches the declared total, so a Complete() that trusted only
+// the count would report the walk verified despite the walk having hit a known
+// anomaly. `deals sync` reads exactly that verdict to decide whether to persist
+// a snapshot, and a bad snapshot makes the next diff call healthy deals gone.
+//
+// The declared total cannot rescue this: it comes from the same response stream
+// that just proved it re-serves windows.
+func TestFetchAllDealsWillNotCertifyAnAnomalousWalk(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page < 1 {
+			page = 1
+		}
+		// 200 rows over two full pages, so the walk does not exit through the
+		// short-page break and actually reaches the third request.
+		start := (page - 1) * 100
+		if start >= 200 {
+			// Instead of an empty page, hand back page one again.
+			start = 0
+		}
+		rows := []map[string]any{}
+		for i := start; i < start+100 && i < 200; i++ {
+			rows = append(rows, dealFixture(i))
+		}
+		writeJSON(t, w, map[string]any{
+			"deals": rows,
+			"meta":  map[string]any{"total_results": 200, "total_pages": 2, "page": page, "per_page": 100},
+		})
+	}))
+	defer server.Close()
+
+	client := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+	result, err := client.FetchAllDeals(context.Background(), 100, "newest", 0)
+	if err != nil {
+		t.Fatalf("FetchAllDeals returned error: %v", err)
+	}
+	if len(result.Deals) != 200 || result.DeclaredTotal == nil || *result.DeclaredTotal != 200 {
+		t.Fatalf("precondition wrong: collected %d of %v", len(result.Deals), result.DeclaredTotal)
+	}
+	if !result.Truncated {
+		t.Fatal("a walk that stopped on unstable ordering was not marked truncated")
+	}
+	if complete := result.Complete(); complete == nil || *complete {
+		t.Fatalf("an anomalous walk certified itself complete = %v", complete)
+	}
+	if !hasWarningContaining(result.Warnings, "no new slugs") {
+		t.Fatalf("the anomaly was not announced: %v", result.Warnings)
+	}
+}
+
+// A --limit stop is expected, so it must not also warn that its count
+// disagrees with the total. Otherwise every capped run emits a scary warning
+// and readers learn to skip all of them.
+func TestFetchAllDealsLimitDoesNotWarnAboutItsOwnShortCount(t *testing.T) {
+	server := catalogServer(t, 363, nil)
+	defer server.Close()
+
+	client := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+	result, err := client.FetchAllDeals(context.Background(), 100, "newest", 10)
+	if err != nil {
+		t.Fatalf("FetchAllDeals returned error: %v", err)
+	}
+	if !result.Truncated {
+		t.Fatal("a --limit run was not marked truncated")
+	}
+	if hasWarningContaining(result.Warnings, "never served") {
+		t.Fatalf("a deliberate --limit stop warned about missing rows: %v", result.Warnings)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected exactly the --limit warning, got %v", result.Warnings)
+	}
+}

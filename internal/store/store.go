@@ -38,8 +38,14 @@ func (db *DB) UpsertProducts(ctx context.Context, products []appsumo.Product) er
 	if err != nil {
 		return err
 	}
+	// An explicit flag rather than inspecting the captured `err`: the final
+	// `return tx.Commit()` never assigns to `err`, so a failed commit would leave
+	// the deferred check reading the loop's last nil. database/sql happens to
+	// release the connection anyway, but the sibling writers in deals.go and
+	// threads.go use this pattern and relying on that is not worth the asymmetry.
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -89,7 +95,11 @@ func (db *DB) UpsertProducts(ctx context.Context, products []appsumo.Product) er
 			return err
 		}
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func stringValue(value any) string {

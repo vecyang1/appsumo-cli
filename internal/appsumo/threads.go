@@ -62,28 +62,41 @@ type threadEnvelope[T any] struct {
 }
 
 // threadCrawl is the accumulated result of walking every offset window.
+//
+// Effective carries the parameters the crawl actually sent, which are not always
+// the ones the caller passed: a zero page size and a blank sort are substituted.
+// Reporting the request instead of the substitution labels a healthy crawl with
+// settings it did not run under.
 type threadCrawl[T any] struct {
 	Items         []T
 	ExpectedTotal *int
 	Requests      int
 	Truncated     bool
 	Warnings      []string
+	Effective     ThreadQuery
+}
+
+// resolve fills in the defaults this endpoint is actually queried with, so that
+// one function decides them and callers can report what was sent.
+func (q ThreadQuery) resolve() ThreadQuery {
+	if q.PageSize <= 0 {
+		q.PageSize = DefaultThreadPageSize
+	}
+	if q.From < 0 {
+		q.From = 0
+	}
+	q.Sort = firstNonBlank(q.Sort, DefaultThreadSort)
+	q.Order = firstNonBlank(q.Order, DefaultThreadOrder)
+	return q
 }
 
 func (q ThreadQuery) params() map[string]string {
-	pageSize := q.PageSize
-	if pageSize <= 0 {
-		pageSize = DefaultThreadPageSize
-	}
-	from := q.From
-	if from < 0 {
-		from = 0
-	}
+	resolved := q.resolve()
 	return map[string]string{
-		"from":           strconv.Itoa(from),
-		"items_per_page": strconv.Itoa(pageSize),
-		"sort":           firstNonBlank(q.Sort, DefaultThreadSort),
-		"order":          firstNonBlank(q.Order, DefaultThreadOrder),
+		"from":           strconv.Itoa(resolved.From),
+		"items_per_page": strconv.Itoa(resolved.PageSize),
+		"sort":           resolved.Sort,
+		"order":          resolved.Order,
 	}
 }
 
@@ -115,12 +128,17 @@ func fetchThread[T any](
 	limit int,
 	idOf func(T) int64,
 ) (*threadCrawl[T], error) {
-	if query.PageSize <= 0 {
-		query.PageSize = DefaultThreadPageSize
-	}
-	crawl := &threadCrawl[T]{}
+	query = query.resolve()
+	crawl := &threadCrawl[T]{Effective: query, Warnings: []string{}}
 	seen := make(map[int64]struct{})
 	offset := query.From
+
+	// Two different reasons to stop early, and they want opposite reporting.
+	// A caller-requested cap is expected, so comparing its short count against
+	// meta.total would warn on every --limit run. A detected anomaly is not
+	// expected, and there the shortfall is the most useful number available.
+	// Both mark the result Truncated, so neither can certify itself complete.
+	cappedOnPurpose := false
 
 	for crawl.Requests < maxThreadRequests {
 		window := query
@@ -154,6 +172,7 @@ func fetchThread[T any](
 
 		if limit > 0 && len(crawl.Items) >= limit {
 			crawl.Truncated = true
+			cappedOnPurpose = true
 			crawl.Warnings = append(crawl.Warnings, fmt.Sprintf(
 				"stopped at --limit %d; more %s exist", limit, noun))
 			break
@@ -161,7 +180,12 @@ func fetchThread[T any](
 
 		// A full window of ids we already hold means the server ignored `from`.
 		// Advancing further would loop on page one forever.
+		//
+		// Truncated is set for the same reason as in FetchAllDeals: the crawl
+		// stopped on a detected anomaly, so its count must not be allowed to
+		// certify itself against a total from the same suspect stream.
 		if added == 0 {
+			crawl.Truncated = true
 			crawl.Warnings = append(crawl.Warnings, fmt.Sprintf(
 				"offset %d returned %d %s but no new ids; the API appears to ignore `from` — crawl stopped early",
 				offset, len(page.Comments), noun))
@@ -172,6 +196,7 @@ func fetchThread[T any](
 
 	if crawl.Requests >= maxThreadRequests {
 		crawl.Truncated = true
+		cappedOnPurpose = true
 		crawl.Warnings = append(crawl.Warnings, fmt.Sprintf(
 			"stopped after the %d request safety cap", maxThreadRequests))
 	}
@@ -179,7 +204,7 @@ func fetchThread[T any](
 	case crawl.ExpectedTotal == nil:
 		crawl.Warnings = append(crawl.Warnings,
 			"response carried no meta.total; completeness could not be verified")
-	case !crawl.Truncated && len(crawl.Items) != *crawl.ExpectedTotal:
+	case !cappedOnPurpose && len(crawl.Items) != *crawl.ExpectedTotal:
 		crawl.Warnings = append(crawl.Warnings, fmt.Sprintf(
 			"collected %d %s but meta.total reported %d", len(crawl.Items), noun, *crawl.ExpectedTotal))
 	}

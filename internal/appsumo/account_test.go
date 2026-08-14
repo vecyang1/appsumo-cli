@@ -67,12 +67,18 @@ func TestSummariseKeepsUnredeemableProductsOffTheActionList(t *testing.T) {
 
 // A healthy account emits no warnings. Without this the warning is untestable as
 // a signal: one that fires on every input is noise a reader learns to skip.
+//
+// The licensing flags are present here because live products always carry them.
+// A fixture that omitted them would be asserting silence about a state the API
+// does not actually produce.
 func TestSummariseIsSilentWhenTheFlagAgrees(t *testing.T) {
 	summary := appsumo.Summarise([]appsumo.Product{
 		{Name: "Growify", Slug: "growify", Status: "activated",
-			RedeemDate: "2025-11-25", IsRedeemed: true},
+			RedeemDate: "2025-11-25", IsRedeemed: true,
+			HasActiveLicense: true, CanTransferLicense: true, IsRefundable: false},
 		{Name: "Neverused", Slug: "neverused", Status: "activated",
-			RedeemDate: nil, IsRedeemed: false},
+			RedeemDate: nil, IsRedeemed: false,
+			HasActiveLicense: false, CanTransferLicense: false, IsRefundable: false},
 	})
 	if len(summary.Warnings) != 0 {
 		t.Fatalf("healthy account emitted warnings: %v", summary.Warnings)
@@ -111,13 +117,17 @@ func TestSummariseCountsLicensingAndRefundWindow(t *testing.T) {
 // on another. A rollup that only understands one of them undercounts silently.
 func TestSummariseReadsFlagsInEveryEncodingAppSumoUses(t *testing.T) {
 	summary := appsumo.Summarise([]appsumo.Product{
-		{Name: "A", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: true, CanTransferLicense: true},
-		{Name: "B", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: "True", CanTransferLicense: "True"},
-		{Name: "C", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: float64(1), CanTransferLicense: float64(1)},
+		{Name: "A", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: true, CanTransferLicense: true,
+			HasActiveLicense: true, IsRefundable: false},
+		{Name: "B", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: "True", CanTransferLicense: "True",
+			HasActiveLicense: "False", IsRefundable: "False"},
+		{Name: "C", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: float64(1), CanTransferLicense: float64(1),
+			HasActiveLicense: float64(0), IsRefundable: float64(0)},
 		// "False" must read as false, so this row carries no redeem_date either;
 		// otherwise the flag and the date genuinely disagree and the warning is
 		// correct rather than spurious.
-		{Name: "D", Status: "activated", RedeemDate: nil, IsRedeemed: "False", CanTransferLicense: "False"},
+		{Name: "D", Status: "activated", RedeemDate: nil, IsRedeemed: "False", CanTransferLicense: "False",
+			HasActiveLicense: false, IsRefundable: false},
 	})
 	if summary.Transferable != 3 {
 		t.Fatalf("transferable = %d, want 3; a flag encoding was not understood", summary.Transferable)
@@ -131,5 +141,44 @@ func TestSummariseSaysWhenThereIsNothingToSummarise(t *testing.T) {
 	summary := appsumo.Summarise(nil)
 	if !hasWarningContaining(summary.Warnings, "run `appsumo sync` first") {
 		t.Fatalf("an empty account gave no remedy: %v", summary.Warnings)
+	}
+}
+
+// TestSummariseReportsUnreadableLicensingFlags is the guard for a headline count
+// that would otherwise understate silently. If AppSumo renames or drops one of
+// these fields it decodes into a nil `any` with no error, boolOf answers false,
+// and "22 active licenses" quietly becomes "0 active licenses" — a specific,
+// plausible, wrong number the user would act on.
+func TestSummariseReportsUnreadableLicensingFlags(t *testing.T) {
+	summary := appsumo.Summarise([]appsumo.Product{
+		// has_active_license absent, as a rename presents it.
+		{Name: "Renamed", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: true,
+			CanTransferLicense: true, IsRefundable: false},
+		{Name: "Fine", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: true,
+			HasActiveLicense: true, CanTransferLicense: true, IsRefundable: false},
+	})
+
+	if summary.ActiveLicenses != 1 {
+		t.Fatalf("active licenses = %d, want the 1 that was actually readable", summary.ActiveLicenses)
+	}
+	if !hasWarningContaining(summary.Warnings, "has_active_license was unreadable on 1 of 2 products") {
+		t.Fatalf("an unreadable headline flag was not reported: %v", summary.Warnings)
+	}
+	if hasWarningContaining(summary.Warnings, "can_transfer_license was unreadable") {
+		t.Fatalf("a readable flag was reported as unreadable: %v", summary.Warnings)
+	}
+}
+
+// A stated false is an answer and must not be confused with an absent field.
+func TestSummariseTreatsAStatedFalseAsReadable(t *testing.T) {
+	summary := appsumo.Summarise([]appsumo.Product{
+		{Name: "Explicit", Status: "activated", RedeemDate: "2025-01-01", IsRedeemed: true,
+			HasActiveLicense: false, CanTransferLicense: "false", IsRefundable: float64(0)},
+	})
+	if summary.ActiveLicenses != 0 || summary.Transferable != 0 || summary.Refundable != 0 {
+		t.Fatalf("stated falses were counted: %#v", summary)
+	}
+	if len(summary.Warnings) != 0 {
+		t.Fatalf("stated falses were reported as unreadable: %v", summary.Warnings)
 	}
 }
