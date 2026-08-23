@@ -1,0 +1,195 @@
+openapi: "3.0.3"
+info:
+  title: AppSumo Buyer Account
+  x-display-name: "AppSumo Buyer Account"
+  version: "2026.05.23"
+  description: Browser-sniffed, read-only AppSumo buyer account endpoints.
+servers:
+  - url: https://appsumo.com
+security:
+  - AppSumoCookie: []
+components:
+  securitySchemes:
+    AppSumoCookie:
+      type: apiKey
+      in: header
+      name: Cookie
+      description: Full AppSumo browser Cookie header. Never write this value to tracked files.
+  schemas:
+    ProductsEnvelope:
+      type: object
+      properties:
+        products:
+          $ref: "#/components/schemas/ProductsPage"
+        alternative_sku_redemptions:
+          type: object
+          additionalProperties: true
+    ProductsPage:
+      type: object
+      properties:
+        count:
+          type: integer
+        next:
+          type: string
+          nullable: true
+        previous:
+          type: string
+          nullable: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+        uuid:
+          type: string
+        invoice_uuid:
+          type: string
+        image:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          type: string
+        plan_name:
+          type: string
+        plan_id:
+          type: integer
+          nullable: true
+        plan_help_text:
+          type: string
+        redeem_text:
+          type: string
+        is_refunded:
+          type: boolean
+        date_refunded:
+          type: string
+          nullable: true
+        is_redeemed:
+          type: boolean
+        is_bundle:
+          type: boolean
+        has_active_license:
+          type: boolean
+        can_activate_license:
+          type: boolean
+        can_enhance_or_reduce_license:
+          type: boolean
+        can_transfer_license:
+          type: boolean
+        has_been_transferred:
+          type: boolean
+        is_refundable:
+          type: boolean
+        show_refund_license_option:
+          type: boolean
+        use_licensing:
+          type: boolean
+        purchase_date:
+          type: string
+        redeem_date:
+          type: string
+          nullable: true
+        plan_stack_count:
+          type: integer
+        license_v2_status:
+          type: string
+        webinar:
+          type: object
+          nullable: true
+          additionalProperties: true
+        is_plus_product:
+          type: boolean
+        support_email:
+          type: string
+        transfer_date:
+          type: string
+          nullable: true
+        addon_deals:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    SessionCurrent:
+      type: object
+      properties:
+        session:
+          type: object
+          additionalProperties: true
+        user:
+          type: object
+          additionalProperties: true
+        messages:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        cart:
+          type: object
+          additionalProperties: true
+    UnreadCount:
+      type: object
+      properties:
+        unread_count:
+          type: integer
+paths:
+  /api/v2/account/products/:
+    get:
+      tags: [products]
+      operationId: listAccountProducts
+      summary: List buyer account products
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+      responses:
+        "200":
+          description: Products page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductsEnvelope"
+  /api/v2/account/products/download/:
+    get:
+      tags: [products]
+      operationId: downloadAccountProductsCsv
+      summary: Download buyer account products CSV
+      responses:
+        "200":
+          description: CSV export containing sensitive license-code columns
+          content:
+            text/csv:
+              schema:
+                type: string
+  /api/sessions/current/:
+    get:
+      tags: [auth]
+      operationId: getCurrentSession
+      summary: Get current web session
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCurrent"
+  /api/sumopulse/notifications/unread-count/:
+    get:
+      tags: [notifications]
+      operationId: getUnreadNotificationCount
+      summary: Get unread notification count
+      responses:
+        "200":
+          description: Unread notification count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnreadCount"
