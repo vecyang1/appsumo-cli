@@ -1,0 +1,20 @@
+.DS_Store
+/appsumo
+*.test
+coverage.out
+.gitnexus/
+.claude/skills/generated/
+
+# Per-machine Claude Code state. Accumulates local permission grants and paths,
+# and is shielded on some machines only by a personal global gitignore — which a
+# contributor cloning this public repo will not have.
+.claude/settings.local.json
+.claude/settings.local.*
+
+# Local secrets and browser-derived auth material.
+.env
+*.cookie
+tmp/
+
+# Generated Printing Press baseline. Recreate from docs/openapi when needed.
+generated/

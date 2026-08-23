@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go mod verify
+      - run: go test ./...
+      # The suite spins up httptest servers per test; -race is cheap here and is
+      # the only check that sees a data race at all.
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+      # Contributors run ./appsumo from the checkout, which passes for reasons a
+      # user does not have. This installs and runs it from outside the tree.
+      - run: ./scripts/install_smoke.sh
