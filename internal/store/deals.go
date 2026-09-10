@@ -375,8 +375,9 @@ func (db *DB) IdealDealsQuery(ctx context.Context, q appsumo.DealsQuery) ([]apps
 		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
 	}
 	if q.Category != "" {
-		sqlQuery += ` and lower(category) = lower(?)`
-		args = append(args, q.Category)
+		sqlQuery += ` and (lower(category) = lower(?) or lower(category) like ?)`
+		catPattern := "%" + strings.ToLower(strings.TrimSpace(q.Category)) + "%"
+		args = append(args, q.Category, catPattern)
 	}
 	if q.MaxPrice > 0 {
 		sqlQuery += ` and price <= ?`

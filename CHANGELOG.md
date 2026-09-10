@@ -6,16 +6,23 @@
 
 - Add `appsumo deals search <query>` to search live public AppSumo deals or synced local SQLite snapshots (`--local`).
 - Add `appsumo deals ideal` to detect and filter ideal deals (rating >= 4.5, review count >= 10, customizable via `--min-rating`, `--min-reviews`, `--query`, `--category`, `--max-price`, and `--local`).
+- Add `--chinese` (`-c`) and `--format` (`table|card|markdown`) output modes to `appsumo deals ideal` for rich Chinese product recommendation cards, complete with product links, pricing, discount calculations, value proposition, and competitor comparisons.
+- Add `appsumo deals sync-notion` to sync curated ideal deals directly to Notion with customizable thresholds and zero external dependencies.
 - Add `--query`, `--min-rating`, `--min-reviews`, `--max-price`, and `--category` flags to `appsumo deals list`.
 - Add `--deals` flag to `appsumo search <query>` to query synced catalog deals from local SQLite.
 - Capture and persist rich deal metadata: `card_description`, `value_prop`, `best_for`, `alternative_to`, `integrations`, and `subcategory`.
-- Add `SearchDeals` and `IdealDeals` store query APIs with automatic column migrations on SQLite.
+- Add `SearchDeals`, `IdealDeals`, and `IdealDealsQuery` store query APIs with automatic column migrations on SQLite.
 - Verified live API contract: AppSumo Elasticsearch browse endpoint `/api/v2/deals/esbrowse/` accepts `query` parameter (and ignores `q`), and supports `sort=rating` for verified highest-rated deals.
-- Add `appsumo deals sync-notion` command and portable `scripts/run_appsumo_monitor.sh` cadence runner.
+- Add `com.vec.appsumo-deal-monitor` LaunchAgent and `scripts/run_appsumo_monitor.sh` for persistent daily catalog tracking and Notion synchronization.
 
 ### Fixed
 
-- Eliminate hardcoded absolute local machine paths in `CAD-20260910-appsumo-deal-monitor.md` and `sync_notion_recommendations.py` to enforce privacy and repository portability.
+- Fix premature truncation in `FetchAllDealsQuery`: walking candidate deals across pages and deterministically sorting by `(average_rating DESC, review_count DESC, price ASC)` prevents dropping higher-rated products that appear on later pages.
+- Decouple pagination cycle detection (`newUnseen == 0`) from client-side filters in `FetchAllDealsQuery`, preventing infinite pagination loops while avoiding false positive early halts.
+- Push `--query`, `--category`, and `--max-price` filters down to SQLite in `IdealDealsQuery`, eliminating the bug where in-memory filtering of a pre-limited slice dropped valid matching deals.
+- Fix `scripts/sync_notion_recommendations.py` to resolve binary path dynamically, accept CLI arguments (`--page-id`, `--token`, `--min-rating`, `--min-reviews`, `--limit`, `--local`), and execute reliably outside the repository working directory.
+- Accurately report local database provenance in CLI output headers instead of misreporting "X of unknown live deals in 0 requests".
+- Add `deals search`, `deals ideal`, and `deals sync-notion` to `scripts/install_smoke.sh` gates.
 
 ## 0.2.0 - 2026-08-14
 

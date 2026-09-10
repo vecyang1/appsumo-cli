@@ -414,4 +414,114 @@ func TestCLIDealsIdealLiveAndLocal(t *testing.T) {
 	if len(localReport.Deals) != 1 || localReport.Deals[0].Slug != "top-tool" {
 		t.Fatalf("expected top-tool from local ideal query, got %v", localReport.Deals)
 	}
+
+	// 4. Local ideal with query filter (previously suffered from early limit drop bug)
+	localQueryOut := runCLI(t, opts, "deals", "ideal", "--local", "--query", "top", "--limit", "5", "--json")
+	var localQueryReport struct {
+		Deals []struct {
+			Slug string `json:"slug"`
+		} `json:"deals"`
+	}
+	if err := json.Unmarshal([]byte(localQueryOut), &localQueryReport); err != nil {
+		t.Fatalf("unmarshal error: %v, out: %s", err, localQueryOut)
+	}
+	if len(localQueryReport.Deals) != 1 || localQueryReport.Deals[0].Slug != "top-tool" {
+		t.Fatalf("expected top-tool from local ideal --query, got %v", localQueryReport.Deals)
+	}
+
+	// 5. Chinese output formatting
+	chineseOut := runCLI(t, opts, "deals", "ideal", "--local", "--chinese", "--limit", "1")
+	if !strings.Contains(chineseOut, "精选 AppSumo 优质 Deal 推荐榜单") || !strings.Contains(chineseOut, "Top Tool") {
+		t.Fatalf("expected Chinese recommendation output, got:\n%s", chineseOut)
+	}
+
+	// 6. Markdown output formatting
+	markdownOut := runCLI(t, opts, "deals", "ideal", "--local", "--format", "markdown", "--limit", "1")
+	if !strings.Contains(markdownOut, "## 精选 AppSumo 优质 Deal 推荐榜单") || !strings.Contains(markdownOut, "https://appsumo.com/products/top-tool/") {
+		t.Fatalf("expected Markdown output with direct links, got:\n%s", markdownOut)
+	}
+}
+
+func TestCLIDealsSyncNotion(t *testing.T) {
+	var capturedToken string
+	var capturedPageID string
+	var capturedBlocks []map[string]any
+
+	mockNotion := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedToken = r.Header.Get("Authorization")
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 4 {
+			capturedPageID = parts[2]
+		}
+		var payload struct {
+			Children []map[string]any `json:"children"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		capturedBlocks = append(capturedBlocks, payload.Children...)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results": []}`))
+	}))
+	defer mockNotion.Close()
+
+	restoreNotion := cli.SetNotionAPIBaseURLForTest(mockNotion.URL)
+	defer restoreNotion()
+
+	catalogSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r1 := catalogRow(1, map[string]any{
+			"slug":        "notion-tool",
+			"public_name": "Notion Tool",
+			"deal_review": map[string]any{"review_count": 60, "average_rating": 4.90},
+		})
+		writeJSON(t, w, map[string]any{
+			"deals": []map[string]any{r1},
+			"meta":  map[string]any{"total_results": 1, "page": 1, "per_page": 10},
+		})
+	}))
+	defer catalogSrv.Close()
+
+	dbPath := filepath.Join(t.TempDir(), "appsumo.db")
+	opts := cli.Options{
+		BaseURL:    catalogSrv.URL,
+		HTTPClient: catalogSrv.Client(),
+		DBPath:     dbPath,
+	}
+
+	// 1. Sync catalog to SQLite
+	_ = runCLI(t, opts, "deals", "sync")
+
+	// 2. Run deals sync-notion
+	out := runCLI(t, opts, "deals", "sync-notion",
+		"--token", "secret-test-token",
+		"--page-id", "test-page-1234",
+		"--local",
+		"--min-rating", "4.8",
+		"--min-reviews", "50",
+		"--limit", "5",
+		"--json",
+	)
+
+	var result struct {
+		SyncedDeals int    `json:"synced_deals"`
+		PageID      string `json:"page_id"`
+		Blocks      int    `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("unmarshal error: %v, out: %s", err, out)
+	}
+	if result.SyncedDeals != 1 || result.PageID != "test-page-1234" {
+		t.Fatalf("expected 1 deal synced to test-page-1234, got %v", result)
+	}
+	if capturedToken != "Bearer secret-test-token" {
+		t.Fatalf("expected token 'Bearer secret-test-token', got %q", capturedToken)
+	}
+	if capturedPageID != "test-page-1234" {
+		t.Fatalf("expected page ID 'test-page-1234', got %q", capturedPageID)
+	}
+	if len(capturedBlocks) == 0 {
+		t.Fatalf("expected Notion blocks to be pushed, got 0")
+	}
 }

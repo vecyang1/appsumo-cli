@@ -340,9 +340,20 @@ func notionDivider() map[string]any {
 	}
 }
 
+var notionAPIBaseURL = "https://api.notion.com"
+
+// SetNotionAPIBaseURLForTest overrides the Notion API endpoint in tests and returns a restore func.
+func SetNotionAPIBaseURLForTest(url string) func() {
+	orig := notionAPIBaseURL
+	notionAPIBaseURL = url
+	return func() {
+		notionAPIBaseURL = orig
+	}
+}
+
 func pushNotionBlocks(ctx context.Context, token, pageID string, blocks []map[string]any) error {
 	client := &http.Client{Timeout: 30 * time.Second}
-	url := fmt.Sprintf("https://api.notion.com/v1/blocks/%s/children", pageID)
+	url := fmt.Sprintf("%s/v1/blocks/%s/children", notionAPIBaseURL, pageID)
 	chunkSize := 40
 
 	for i := 0; i < len(blocks); i += chunkSize {
