@@ -513,3 +513,86 @@ func TestNormaliseDealCapturesRichMetadata(t *testing.T) {
 		t.Errorf("Subcategory = %q, want 'SEO Tools'", d.Subcategory)
 	}
 }
+
+func TestFetchAllDealsQueryMultiPageRanking(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		if page == "1" {
+			d1 := dealFixture(1)
+			d1["slug"] = "page1-deal"
+			d1["deal_review"] = map[string]any{"review_count": 50, "average_rating": 4.80}
+			writeJSON(t, w, map[string]any{
+				"deals": []map[string]any{d1},
+				"meta":  map[string]any{"total_results": 2, "page": 1, "per_page": 1},
+			})
+			return
+		}
+		if page == "2" {
+			d2 := dealFixture(2)
+			d2["slug"] = "page2-superior-deal"
+			d2["deal_review"] = map[string]any{"review_count": 200, "average_rating": 4.98}
+			writeJSON(t, w, map[string]any{
+				"deals": []map[string]any{d2},
+				"meta":  map[string]any{"total_results": 2, "page": 2, "per_page": 1},
+			})
+			return
+		}
+		writeJSON(t, w, map[string]any{"deals": []any{}, "meta": map[string]any{"total_results": 2}})
+	}))
+	defer server.Close()
+
+	client := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+	result, err := client.FetchAllDealsQuery(context.Background(), appsumo.DealsQuery{
+		PerPage:    1,
+		MinRating:  4.5,
+		MinReviews: 10,
+		Limit:      1,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Deals) != 1 {
+		t.Fatalf("expected 1 deal, got %d", len(result.Deals))
+	}
+	// It should return the superior deal from page 2 (4.98), not truncate prematurely on page 1 (4.80)
+	if result.Deals[0].Slug != "page2-superior-deal" {
+		t.Fatalf("expected page2-superior-deal to be selected as top deal, got %s", result.Deals[0].Slug)
+	}
+}
+
+func TestFetchAllDealsQueryStopsOnUnstableOrderingEvenWithFilters(t *testing.T) {
+	// A server that loops on the same slug
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d := dealFixture(1)
+		d["slug"] = "same-slug-repeating"
+		d["deal_review"] = map[string]any{"review_count": 50, "average_rating": 4.9}
+		writeJSON(t, w, map[string]any{
+			"deals": []map[string]any{d},
+			"meta":  map[string]any{"total_results": 50, "page": 1, "per_page": 1},
+		})
+	}))
+	defer server.Close()
+
+	client := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+	result, err := client.FetchAllDealsQuery(context.Background(), appsumo.DealsQuery{
+		PerPage:    1,
+		MinRating:  4.5,
+		MinReviews: 10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Truncated {
+		t.Fatalf("cycle should mark result truncated")
+	}
+	if !hasWarningContaining(result.Warnings, "no new slugs") {
+		t.Fatalf("expected 'no new slugs' warning, got %v", result.Warnings)
+	}
+}
+
+func TestDealURL(t *testing.T) {
+	d := appsumo.Deal{Slug: "awesome-tool"}
+	if d.DealURL() != "https://appsumo.com/products/awesome-tool/" {
+		t.Errorf("DealURL = %q, want 'https://appsumo.com/products/awesome-tool/'", d.DealURL())
+	}
+}

@@ -1,34 +1,61 @@
 #!/usr/bin/env python3
 """
 Sync AppSumo ideal product recommendations and capability guide to Notion.
-Page: Appsumo CLI (appsumo-cli) - 3d3e1b43-2393-81f1-a87d-c75cb340e5e1
+Default Page: Appsumo CLI (appsumo-cli) - 3d3e1b43-2393-81f1-a87d-c75cb340e5e1
 """
 
+import argparse
+import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-NOTION_PAGE_ID = "3d3e1b43-2393-81f1-a87d-c75cb340e5e1"
+DEFAULT_PAGE_ID = "3d3e1b43-2393-81f1-a87d-c75cb340e5e1"
 ENV_PATH = Path.home() / ".gemini/antigravity/skills/notion-mcp-connector/.env"
 
-def get_notion_token():
+def get_appsumo_binary(explicit_bin=None):
+    if explicit_bin and os.path.isfile(explicit_bin) and os.access(explicit_bin, os.X_OK):
+        return explicit_bin
+    if os.getenv("APPSUMO_BIN"):
+        return os.getenv("APPSUMO_BIN")
+    # Resolve relative to script location (26.05.23-appsumo-cli/appsumo)
+    repo_bin = Path(__file__).resolve().parent.parent / "appsumo"
+    if repo_bin.is_file() and os.access(repo_bin, os.X_OK):
+        return str(repo_bin)
+    # Check PATH
+    which_bin = shutil.which("appsumo")
+    if which_bin:
+        return which_bin
+    return str(repo_bin)
+
+def get_notion_token(explicit_token=None):
+    if explicit_token:
+        return explicit_token
     token = os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY")
     if token:
         return token
-    if os.path.exists(ENV_PATH):
+    if ENV_PATH.exists():
         with open(ENV_PATH) as f:
             for line in f:
                 if line.startswith("NOTION_TOKEN=") or line.startswith("NOTION_API_KEY="):
                     return line.split("=", 1)[1].strip().strip("\"'")
-    raise ValueError("Notion token not found in environment or .env file")
+    raise ValueError("Notion token not found in arguments, environment, or .env file")
 
-def fetch_ideal_deals():
-    # Run the local appsumo CLI to get verified live deals
-    cmd = ["./appsumo", "deals", "ideal", "--min-rating", "4.8", "--min-reviews", "50", "--limit", "10", "--json"]
+def fetch_ideal_deals(bin_path, min_rating=4.8, min_reviews=50, limit=10, local=False):
+    cmd = [
+        bin_path, "deals", "ideal",
+        "--min-rating", str(min_rating),
+        "--min-reviews", str(min_reviews),
+        "--limit", str(limit),
+        "--json"
+    ]
+    if local:
+        cmd.append("--local")
     proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
     data = json.loads(proc.stdout)
     return data.get("deals", [])
@@ -127,15 +154,36 @@ def append_blocks_chunk(token, page_id, blocks):
         return json.loads(resp.read().decode("utf-8"))
 
 def main():
-    token = get_notion_token()
-    deals = fetch_ideal_deals()
+    parser = argparse.ArgumentParser(description="Sync AppSumo ideal product recommendations to Notion")
+    parser.add_argument("--page-id", default=os.getenv("NOTION_PAGE_ID", DEFAULT_PAGE_ID), help="Notion page ID")
+    parser.add_argument("--token", default=None, help="Notion API Token")
+    parser.add_argument("--min-rating", type=float, default=4.8, help="Minimum average rating")
+    parser.add_argument("--min-reviews", type=int, default=50, help="Minimum review count")
+    parser.add_argument("--limit", type=int, default=10, help="Number of deals to recommend")
+    parser.add_argument("--local", action="store_true", help="Query local SQLite DB instead of live API")
+    parser.add_argument("--bin", default=None, help="Path to appsumo CLI binary")
+    args = parser.parse_args()
+
+    token = get_notion_token(args.token)
+    appsumo_bin = get_appsumo_binary(args.bin)
+    
+    print(f"Using AppSumo binary: {appsumo_bin}")
+    deals = fetch_ideal_deals(
+        appsumo_bin,
+        min_rating=args.min_rating,
+        min_reviews=args.min_reviews,
+        limit=args.limit,
+        local=args.local
+    )
     print(f"Fetched {len(deals)} ideal deals from AppSumo CLI")
 
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     blocks = []
 
     # Overview Callout
     blocks.append(make_callout(
-        "AppSumo CLI 原生工具链已全面升级：支持 Elasticsearch 实时搜索 (query 关键词)、按真实评价排序 (sort=rating)、优质 Deal 自动化探测 (ideal 筛选评分>=4.8且评论>=50)、以及 SQLite 本地全量快照离线检索与双向比对。",
+        f"AppSumo 优质 Deal 实时推荐榜单（更新时间：{now_str}）\n"
+        f"基于 AppSumo CLI 原生工具链自动探测与筛选，本期共精选 {len(deals)} 款评分≥{args.min_rating}且评价数≥{args.min_reviews}条的顶级终身授权软件。",
         icon="🚀"
     ))
 
@@ -163,8 +211,8 @@ def main():
     # Commands
     blocks.append(make_h2("二、CLI 统一命令入口 (Command Reference)"))
     blocks.append(make_code(
-        "# 1. 探测优质 Deal (评分 >= 4.8 且评论 >= 50)\n"
-        "appsumo deals ideal --min-rating 4.8 --min-reviews 50 --limit 10\n\n"
+        "# 1. 探测优质 Deal (评分 >= 4.8 且评论 >= 50，支持中文与卡片排版)\n"
+        "appsumo deals ideal --min-rating 4.8 --min-reviews 50 --limit 10 --chinese\n\n"
         "# 2. 实时按关键词检索（例如 SEO 工具）\n"
         "appsumo deals search seo\n\n"
         "# 3. 全量快照同步与本地检索\n"
@@ -172,23 +220,25 @@ def main():
         "appsumo deals search video --local\n"
         "appsumo search seo --deals\n\n"
         "# 4. 监测目录变化（价格调整、库存移动、新上线产品）\n"
-        "appsumo deals diff"
+        "appsumo deals diff\n\n"
+        "# 5. 一键同步推荐至 Notion\n"
+        "appsumo deals sync-notion --limit 10"
     ))
 
     # Ideal Deals Recommendations
-    blocks.append(make_h2("三、精选 AppSumo 优质产品推荐榜单 (Ideal Deals Top 10)"))
+    blocks.append(make_h2(f"三、精选 AppSumo 优质产品推荐榜单 (Ideal Deals Top {len(deals)})"))
     blocks.append(make_paragraph([
         text_rt("筛选条件：", bold=True),
-        text_rt("平均评分 >= 4.80 星，买家真实评价数 >= 50 条，具备明确终身授权 (Lifetime Deal) 与极高性价比。")
+        text_rt(f"平均评分 >= {args.min_rating:.2f} 星，买家真实评价数 >= {args.min_reviews} 条，具备明确终身授权 (Lifetime Deal) 与极高性价比。")
     ]))
     blocks.append(make_divider())
 
     for idx, d in enumerate(deals, start=1):
-        name = d.get("name", "Unknown")
+        name = d.get("name") or d.get("slug", "Unknown")
         slug = d.get("slug", "")
-        price = d.get("price", 0)
-        orig_price = d.get("original_price", 0)
-        rating = d.get("average_rating", 0)
+        price = d.get("price", 0.0)
+        orig_price = d.get("original_price", 0.0)
+        rating = d.get("average_rating", 0.0)
         reviews = d.get("review_count", 0)
         category = d.get("category", "")
         desc = d.get("card_description", "")
@@ -208,13 +258,20 @@ def main():
         meta_parts = [
             text_rt("💰 终身价格: ", bold=True),
             text_rt(f"${price:.2f}", bold=True, color="green"),
-            text_rt(f" (官方原价 ${orig_price:.2f}，立省 {discount_pct}%) | "),
-            text_rt("📂 分类: ", bold=True),
-            text_rt(category),
-            text_rt(" | "),
+        ]
+        if discount_pct > 0:
+            meta_parts.append(text_rt(f" (官方原价 ${orig_price:.2f}，立省 {discount_pct}%) | "))
+        else:
+            meta_parts.append(text_rt(" | "))
+        if category:
+            meta_parts.extend([
+                text_rt("📂 分类: ", bold=True),
+                text_rt(f"{category} | ")
+            ])
+        meta_parts.extend([
             text_rt("🔗 直达链接: ", bold=True),
             text_rt("点击前往 AppSumo", link=deal_url)
-        ]
+        ])
         blocks.append(make_paragraph(meta_parts))
 
         if value_prop or desc:
@@ -252,14 +309,13 @@ def main():
         text_rt(" 自动检测优质 Deal 的库存告急与价格变动，并实时推送更新。")
     ]))
 
-    # Push to Notion in chunks of 50 blocks (Notion API limit per request is 100)
     chunk_size = 40
     for i in range(0, len(blocks), chunk_size):
         chunk = blocks[i:i + chunk_size]
         print(f"Appending chunk {i // chunk_size + 1} ({len(chunk)} blocks)...")
-        append_blocks_chunk(token, NOTION_PAGE_ID, chunk)
+        append_blocks_chunk(token, args.page_id, chunk)
 
-    print("Successfully synced all recommendations and guide to Notion!")
+    print(f"Successfully synced all {len(deals)} recommendations and guide to Notion page {args.page_id}!")
 
 if __name__ == "__main__":
     main()

@@ -372,4 +372,44 @@ func TestStoreSearchDealsAndIdealDeals(t *testing.T) {
 	if len(ideal[0].AlternativeTo) != 2 || ideal[0].AlternativeTo[0] != "NeverBounce" {
 		t.Errorf("AlternativeTo did not survive: %v", ideal[0].AlternativeTo)
 	}
+
+	// 5. IdealDealsQuery with keyword query and category
+	emailIdeal, err := db.IdealDealsQuery(ctx, appsumo.DealsQuery{
+		Query:      "email",
+		MinRating:  4.5,
+		MinReviews: 10,
+		Limit:      5,
+	})
+	if err != nil {
+		t.Fatalf("IdealDealsQuery('email') error: %v", err)
+	}
+	if len(emailIdeal) != 1 || emailIdeal[0].Slug != "reoon-email-verifier" {
+		t.Fatalf("expected 1 email ideal deal (reoon), got %v", emailIdeal)
+	}
+
+	catIdeal, err := db.IdealDealsQuery(ctx, appsumo.DealsQuery{
+		Category:   "Websites",
+		MinRating:  4.5,
+		MinReviews: 10,
+		Limit:      5,
+	})
+	if err != nil {
+		t.Fatalf("IdealDealsQuery(category='Websites') error: %v", err)
+	}
+	if len(catIdeal) != 1 || catIdeal[0].Slug != "divhunt" {
+		t.Fatalf("expected 1 website ideal deal (divhunt), got %v", catIdeal)
+	}
+
+	priceIdeal, err := db.IdealDealsQuery(ctx, appsumo.DealsQuery{
+		MaxPrice:   80.0,
+		MinRating:  4.5,
+		MinReviews: 10,
+		Limit:      5,
+	})
+	if err != nil {
+		t.Fatalf("IdealDealsQuery(maxPrice=80) error: %v", err)
+	}
+	if len(priceIdeal) != 2 {
+		t.Fatalf("expected 2 deals under $80, got %d", len(priceIdeal))
+	}
 }
