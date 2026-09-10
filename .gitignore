@@ -18,3 +18,15 @@ tmp/
 
 # Generated Printing Press baseline. Recreate from docs/openapi when needed.
 generated/
+
+# Local private files and indices
+CLAUDE.md
+GEMINI.md
+VAULT.md
+PROJECT_LINKS.md
+decisions.md
+progress.md
+task_plan.md
+handoff.md
+graphify-out/
+
