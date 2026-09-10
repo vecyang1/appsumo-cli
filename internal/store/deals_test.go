@@ -273,3 +273,103 @@ func TestRapidSnapshotsDoNotCollapse(t *testing.T) {
 		t.Fatalf("sub-second stamps do not sort newest-first: %v", stamps)
 	}
 }
+
+func floatPtr(v float64) *float64 { return &v }
+
+func TestStoreSearchDealsAndIdealDeals(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	d1 := appsumo.Deal{
+		Slug:            "reoon-email-verifier",
+		Name:            "Reoon Email Verifier",
+		Price:           79.0,
+		OriginalPrice:   418.5,
+		CardDescription: "The most accurate email validation service",
+		ValueProp:       "Clean invalid email addresses",
+		BestFor:         []string{"Marketers", "Agencies"},
+		AlternativeTo:   []string{"NeverBounce", "ZeroBounce"},
+		Category:        "email-sms-marketing",
+		AverageRating:   floatPtr(4.93),
+		ReviewCount:     intPtr(756),
+	}
+	d2 := appsumo.Deal{
+		Slug:            "divhunt",
+		Name:            "Divhunt",
+		Price:           79.0,
+		OriginalPrice:   180.0,
+		CardDescription: "Effortlessly build fast websites",
+		ValueProp:       "No-code site builder",
+		BestFor:         []string{"Developers"},
+		AlternativeTo:   []string{"Webflow"},
+		Category:        "website-builders-wordpress",
+		AverageRating:   floatPtr(4.86),
+		ReviewCount:     intPtr(259),
+	}
+	d3 := appsumo.Deal{
+		Slug:            "low-rated-tool",
+		Name:            "Low Rated Tool",
+		Price:           29.0,
+		CardDescription: "A tool that does not meet ideal criteria",
+		AverageRating:   floatPtr(3.8),
+		ReviewCount:     intPtr(2),
+	}
+
+	stamp := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	if _, err := db.SaveDealSnapshot(ctx, stamp, []appsumo.Deal{d1, d2, d3}); err != nil {
+		t.Fatalf("SaveDealSnapshot returned error: %v", err)
+	}
+
+	// 1. Search by name/slug
+	emailMatches, err := db.SearchDeals(ctx, "reoon")
+	if err != nil {
+		t.Fatalf("SearchDeals('reoon') error: %v", err)
+	}
+	if len(emailMatches) != 1 || emailMatches[0].Slug != "reoon-email-verifier" {
+		t.Fatalf("expected reoon-email-verifier, got %v", emailMatches)
+	}
+
+	// 2. Search by AlternativeTo
+	webflowMatches, err := db.SearchDeals(ctx, "Webflow")
+	if err != nil {
+		t.Fatalf("SearchDeals('Webflow') error: %v", err)
+	}
+	if len(webflowMatches) != 1 || webflowMatches[0].Slug != "divhunt" {
+		t.Fatalf("expected divhunt via AlternativeTo, got %v", webflowMatches)
+	}
+
+	// 3. Search by CardDescription keyword
+	websiteMatches, err := db.SearchDeals(ctx, "websites")
+	if err != nil {
+		t.Fatalf("SearchDeals('websites') error: %v", err)
+	}
+	if len(websiteMatches) != 1 || websiteMatches[0].Slug != "divhunt" {
+		t.Fatalf("expected divhunt via description, got %v", websiteMatches)
+	}
+
+	// 4. IdealDeals query
+	ideal, err := db.IdealDeals(ctx, 4.5, 10, 10)
+	if err != nil {
+		t.Fatalf("IdealDeals error: %v", err)
+	}
+	if len(ideal) != 2 {
+		t.Fatalf("expected 2 ideal deals, got %d", len(ideal))
+	}
+	if ideal[0].Slug != "reoon-email-verifier" {
+		t.Errorf("expected top ideal deal to be reoon (rating 4.93), got %s", ideal[0].Slug)
+	}
+	if ideal[1].Slug != "divhunt" {
+		t.Errorf("expected second ideal deal to be divhunt (rating 4.86), got %s", ideal[1].Slug)
+	}
+	// Check rich fields survived
+	if ideal[0].CardDescription != "The most accurate email validation service" {
+		t.Errorf("CardDescription did not survive: %q", ideal[0].CardDescription)
+	}
+	if len(ideal[0].AlternativeTo) != 2 || ideal[0].AlternativeTo[0] != "NeverBounce" {
+		t.Errorf("AlternativeTo did not survive: %v", ideal[0].AlternativeTo)
+	}
+}

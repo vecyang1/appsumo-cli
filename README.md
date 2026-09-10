@@ -30,6 +30,8 @@ with no credentials configured and buyer credentials never reach a crawl.
 **Public data** (no credentials)
 
 - `appsumo deals list`
+- `appsumo deals search <query>`
+- `appsumo deals ideal`
 - `appsumo deals sync`
 - `appsumo deals diff`
 - `appsumo reviews <product-slug>`
@@ -38,6 +40,7 @@ with no credentials configured and buyer credentials never reach a crawl.
 **Local database**
 
 - `appsumo search <query>`
+- `appsumo search <query> --deals`
 - `appsumo sql <select-query>`
 
 CSV and JSON exports always redact license/code fields.
@@ -96,6 +99,25 @@ Two behaviours worth knowing before you build on this:
   on every deal and is reported as unknown.
 
 See [docs/04_catalog_and_questions_discovery.md](docs/04_catalog_and_questions_discovery.md).
+
+## Ideal Deals & Product Search
+
+Search the public deal catalog by keyword live from AppSumo's Elasticsearch browse surface, or query locally from synced SQLite snapshots:
+
+```bash
+appsumo deals search seo
+appsumo deals search seo --local
+appsumo search seo --deals
+```
+
+Discover top-rated, proven "ideal" products with verified customer reviews and high ratings:
+
+```bash
+appsumo deals ideal
+appsumo deals ideal --min-rating 4.8 --min-reviews 50 --limit 10
+appsumo deals ideal --query video --limit 5
+appsumo deals ideal --local
+```
 
 ## Public Product Questions
 

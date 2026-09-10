@@ -47,6 +47,8 @@ Each has been measured live; do not re-derive by reading the site's own pager.
   without it a full walk returned 305 of 363 declared deals, with 58 duplicates and no error.
   The sort *value* is ignored. Covered by `TestFetchAllDealsAlwaysSendsSort`.
 - **`search_after` on catalog rows is not a usable cursor.** Sending it returns page one.
+- **The catalog accepts `query` for keyword search, but ignores `q`.** Measured live on 2026-09-10 (`query=seo` returned 39 deals, `q=seo` returned all 352).
+- **The catalog honours `sort=rating` for verified highest-rated deals.** Measured live on 2026-09-10.
 
 Any new pagination code needs a test that fails when the parameter is ignored, and a
 reconciliation against a count the endpoint did not produce itself.

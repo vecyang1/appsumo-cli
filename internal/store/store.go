@@ -227,6 +227,10 @@ func (db *DB) init(ctx context.Context) error {
 			return fmt.Errorf("apply schema %d: %w", index, err)
 		}
 	}
+	// Migrate existing deals table to add new columns if they do not exist
+	for _, col := range []string{"card_description", "value_prop", "best_for", "alternative_to", "integrations", "subcategory"} {
+		_, _ = db.db.ExecContext(ctx, fmt.Sprintf("alter table deals add column %s text", col))
+	}
 	return nil
 }
 

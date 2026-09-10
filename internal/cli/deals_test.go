@@ -286,3 +286,132 @@ func TestCLIReportsTheParametersItActuallySent(t *testing.T) {
 		t.Fatalf("empty warnings did not serialise as an array: %s", out)
 	}
 }
+
+func TestCLIDealsSearchLiveAndLocal(t *testing.T) {
+	var requestedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedQuery = r.URL.Query().Get("query")
+		row := catalogRow(1, map[string]any{
+			"slug":        "grow-seo",
+			"public_name": "Grow SEO",
+		})
+		writeJSON(t, w, map[string]any{
+			"deals": []map[string]any{row},
+			"meta":  map[string]any{"total_results": 1, "page": 1, "per_page": 10},
+		})
+	}))
+	defer server.Close()
+
+	dbPath := filepath.Join(t.TempDir(), "appsumo.db")
+	opts := cli.Options{
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
+		DBPath:     dbPath,
+	}
+
+	// 1. Live search sends query parameter to API
+	out := runCLI(t, opts, "deals", "search", "seo", "--json")
+	var report struct {
+		Deals []struct {
+			Slug string `json:"slug"`
+		} `json:"deals"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("unmarshal error: %v, out: %s", err, out)
+	}
+	if len(report.Deals) != 1 || report.Deals[0].Slug != "grow-seo" {
+		t.Fatalf("expected grow-seo deal, got %v", report.Deals)
+	}
+	if requestedQuery != "seo" {
+		t.Fatalf("expected API requestedQuery to be 'seo', got %q", requestedQuery)
+	}
+
+	// 2. First sync into local SQLite database
+	_ = runCLI(t, opts, "deals", "sync")
+
+	// 3. Local search finds deal from SQLite
+	localOut := runCLI(t, opts, "deals", "search", "grow", "--local", "--json")
+	var localReport struct {
+		Deals []struct {
+			Slug string `json:"slug"`
+		} `json:"deals"`
+	}
+	if err := json.Unmarshal([]byte(localOut), &localReport); err != nil {
+		t.Fatalf("unmarshal error: %v, out: %s", err, localOut)
+	}
+	if len(localReport.Deals) != 1 || localReport.Deals[0].Slug != "grow-seo" {
+		t.Fatalf("expected grow-seo from local search, got %v", localReport.Deals)
+	}
+
+	// 4. Root search with --deals flag
+	rootOut := runCLI(t, opts, "search", "grow", "--deals", "--json")
+	var rootReport struct {
+		Deals []struct {
+			Slug string `json:"slug"`
+		} `json:"deals"`
+	}
+	if err := json.Unmarshal([]byte(rootOut), &rootReport); err != nil {
+		t.Fatalf("unmarshal error: %v, out: %s", err, rootOut)
+	}
+	if len(rootReport.Deals) != 1 || rootReport.Deals[0].Slug != "grow-seo" {
+		t.Fatalf("expected grow-seo from search --deals, got %v", rootReport.Deals)
+	}
+}
+
+func TestCLIDealsIdealLiveAndLocal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r1 := catalogRow(1, map[string]any{
+			"slug":        "top-tool",
+			"public_name": "Top Tool",
+			"deal_review": map[string]any{"review_count": 100, "average_rating": 4.95},
+		})
+		r2 := catalogRow(2, map[string]any{
+			"slug":        "low-tool",
+			"public_name": "Low Tool",
+			"deal_review": map[string]any{"review_count": 2, "average_rating": 4.1},
+		})
+		writeJSON(t, w, map[string]any{
+			"deals": []map[string]any{r1, r2},
+			"meta":  map[string]any{"total_results": 2, "page": 1, "per_page": 10},
+		})
+	}))
+	defer server.Close()
+
+	dbPath := filepath.Join(t.TempDir(), "appsumo.db")
+	opts := cli.Options{
+		BaseURL:    server.URL,
+		HTTPClient: server.Client(),
+		DBPath:     dbPath,
+	}
+
+	// 1. Live ideal command filters out low-rated deals
+	out := runCLI(t, opts, "deals", "ideal", "--min-rating", "4.5", "--min-reviews", "10", "--json")
+	var report struct {
+		Deals []struct {
+			Slug string `json:"slug"`
+		} `json:"deals"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("unmarshal error: %v, out: %s", err, out)
+	}
+	if len(report.Deals) != 1 || report.Deals[0].Slug != "top-tool" {
+		t.Fatalf("expected top-tool, got %v", report.Deals)
+	}
+
+	// 2. Sync to local database
+	_ = runCLI(t, opts, "deals", "sync")
+
+	// 3. Local ideal command queries from local SQLite
+	localOut := runCLI(t, opts, "deals", "ideal", "--local", "--min-rating", "4.5", "--min-reviews", "10", "--json")
+	var localReport struct {
+		Deals []struct {
+			Slug string `json:"slug"`
+		} `json:"deals"`
+	}
+	if err := json.Unmarshal([]byte(localOut), &localReport); err != nil {
+		t.Fatalf("unmarshal error: %v, out: %s", err, localOut)
+	}
+	if len(localReport.Deals) != 1 || localReport.Deals[0].Slug != "top-tool" {
+		t.Fatalf("expected top-tool from local ideal query, got %v", localReport.Deals)
+	}
+}

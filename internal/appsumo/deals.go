@@ -55,6 +55,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -64,6 +65,9 @@ const (
 
 	// DefaultDealsSort is required for a complete walk; see the note above.
 	DefaultDealsSort = "newest"
+
+	// DealsSortRating sorts deals by rating and community review validation.
+	DealsSortRating = "rating"
 
 	maxDealsRequests = 60
 )
@@ -94,6 +98,21 @@ type dealPayload struct {
 	IsFree        bool        `json:"is_free"`
 	ListingType   string      `json:"listing_type"`
 	AbsoluteURL   string      `json:"get_absolute_url"`
+
+	CardDescription string `json:"card_description"`
+
+	StoryDetails *struct {
+		ValueProp string `json:"value_prop"`
+		Subheader string `json:"subheader"`
+		Header    string `json:"header"`
+	} `json:"story_details"`
+
+	Attributes *struct {
+		BestFor       []string `json:"best_for"`
+		AlternativeTo []string `json:"alternative_to"`
+		Integrations  []string `json:"integrations"`
+		Subcategory   []string `json:"subcategory"`
+	} `json:"attributes"`
 
 	UsesCodes                bool `json:"uses_codes"`
 	CodesRemaining           *int `json:"codes_remaining"`
@@ -132,6 +151,13 @@ type Deal struct {
 	IsFree        bool    `json:"is_free"`
 	ListingType   string  `json:"listing_type"`
 
+	CardDescription string   `json:"card_description,omitempty"`
+	ValueProp       string   `json:"value_prop,omitempty"`
+	BestFor         []string `json:"best_for,omitempty"`
+	AlternativeTo   []string `json:"alternative_to,omitempty"`
+	Integrations    []string `json:"integrations,omitempty"`
+	Subcategory     string   `json:"subcategory,omitempty"`
+
 	// CodesRemaining is nil unless the deal actually sells codes. See the
 	// package note: a bare zero here means "not applicable" in live data.
 	CodesRemaining *int `json:"codes_remaining"`
@@ -154,6 +180,19 @@ type Deal struct {
 	Raw json.RawMessage `json:"-"`
 }
 
+// DealsQuery specifies parameters and filters for catalog search and walk.
+type DealsQuery struct {
+	Query      string  `json:"query,omitempty"`
+	Sort       string  `json:"sort,omitempty"`
+	Page       int     `json:"page,omitempty"`
+	PerPage    int     `json:"per_page,omitempty"`
+	Limit      int     `json:"limit,omitempty"`
+	MinRating  float64 `json:"min_rating,omitempty"`
+	MinReviews int     `json:"min_reviews,omitempty"`
+	MaxPrice   float64 `json:"max_price,omitempty"`
+	Category   string  `json:"category,omitempty"`
+}
+
 // DealsResult is a full catalog walk plus everything needed to judge it.
 //
 // Sort and PageSize are what the walk actually sent, not what the caller asked
@@ -168,6 +207,7 @@ type DealsResult struct {
 	Warnings      []string
 	Sort          string
 	PageSize      int
+	Query         string
 }
 
 // Complete reports whether the walk collected exactly as many deals as the
@@ -204,6 +244,19 @@ func normaliseDeal(payload dealPayload, raw json.RawMessage) Deal {
 		deal.TimerReason = reason.Reason
 	}
 
+	deal.CardDescription = payload.CardDescription
+	if payload.StoryDetails != nil {
+		deal.ValueProp = payload.StoryDetails.ValueProp
+	}
+	if payload.Attributes != nil {
+		deal.BestFor = payload.Attributes.BestFor
+		deal.AlternativeTo = payload.Attributes.AlternativeTo
+		deal.Integrations = payload.Attributes.Integrations
+		if len(payload.Attributes.Subcategory) > 0 {
+			deal.Subcategory = payload.Attributes.Subcategory[0]
+		}
+	}
+
 	// Stock counters are only meaningful when the deal says it uses them.
 	if payload.UsesCodes && payload.CodesRemaining != nil {
 		remaining := *payload.CodesRemaining
@@ -227,6 +280,11 @@ func normaliseDeal(payload dealPayload, raw json.RawMessage) Deal {
 	if node, ok := payload.Taxonomy["category"]; ok {
 		deal.Category = node.ValueEnumeration
 	}
+	if deal.Subcategory == "" {
+		if node, ok := payload.Taxonomy["subcategory"]; ok {
+			deal.Subcategory = node.ValueEnumeration
+		}
+	}
 	if node, ok := payload.Taxonomy["group"]; ok {
 		deal.Group = node.ValueEnumeration
 	}
@@ -235,22 +293,34 @@ func normaliseDeal(payload dealPayload, raw json.RawMessage) Deal {
 
 // FetchDealsPage reads one browse page of the public catalog.
 func (c *Client) FetchDealsPage(ctx context.Context, page, perPage int, sort string) ([]Deal, DealsMeta, error) {
+	return c.FetchDealsPageQuery(ctx, DealsQuery{Page: page, PerPage: perPage, Sort: sort})
+}
+
+// FetchDealsPageQuery reads one browse page with arbitrary query parameters.
+func (c *Client) FetchDealsPageQuery(ctx context.Context, q DealsQuery) ([]Deal, DealsMeta, error) {
+	page := q.Page
 	if page < 1 {
 		page = 1
 	}
+	perPage := q.PerPage
 	if perPage <= 0 {
 		perPage = DefaultDealsPageSize
 	}
 	// An empty sort is not a neutral default here: it is the setting that loses
 	// rows. Substitute rather than forward it.
-	sort = firstNonBlank(sort, DefaultDealsSort)
+	sort := firstNonBlank(q.Sort, DefaultDealsSort)
 
-	var envelope dealsEnvelope
-	err := c.public().getJSON(ctx, "/api/v2/deals/esbrowse/", map[string]string{
+	params := map[string]string{
 		"page":     strconv.Itoa(page),
 		"per_page": strconv.Itoa(perPage),
 		"sort":     sort,
-	}, &envelope)
+	}
+	if q.Query != "" {
+		params["query"] = q.Query
+	}
+
+	var envelope dealsEnvelope
+	err := c.public().getJSON(ctx, "/api/v2/deals/esbrowse/", params, &envelope)
 	if err != nil {
 		return nil, DealsMeta{}, err
 	}
@@ -271,13 +341,25 @@ func (c *Client) FetchDealsPage(ctx context.Context, page, perPage int, sort str
 //
 // limit caps the collected deals; 0 means no cap.
 func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, limit int) (*DealsResult, error) {
+	return c.FetchAllDealsQuery(ctx, DealsQuery{PerPage: perPage, Sort: sort, Limit: limit})
+}
+
+// FetchAllDealsQuery walks the catalog matching DealsQuery filters.
+func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsResult, error) {
+	perPage := q.PerPage
 	if perPage <= 0 {
 		perPage = DefaultDealsPageSize
 	}
-	sort = firstNonBlank(sort, DefaultDealsSort)
-	result := &DealsResult{Warnings: []string{}, Sort: sort, PageSize: perPage}
+	sort := firstNonBlank(q.Sort, DefaultDealsSort)
+	result := &DealsResult{
+		Warnings: []string{},
+		Sort:     sort,
+		PageSize: perPage,
+		Query:    q.Query,
+	}
 	seen := make(map[string]struct{})
 	duplicates := 0
+	limit := q.Limit
 
 	// See fetchThread: a caller-requested cap is expected and must not warn about
 	// its own short count, while an anomaly-triggered stop should report the
@@ -285,7 +367,11 @@ func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, li
 	cappedOnPurpose := false
 
 	for page := 1; page <= maxDealsRequests; page++ {
-		deals, meta, err := c.FetchDealsPage(ctx, page, perPage, sort)
+		curQuery := q
+		curQuery.Page = page
+		curQuery.PerPage = perPage
+		curQuery.Sort = sort
+		deals, meta, err := c.FetchDealsPageQuery(ctx, curQuery)
 		if err != nil {
 			return nil, err
 		}
@@ -309,6 +395,21 @@ func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, li
 				continue
 			}
 			seen[key] = struct{}{}
+
+			// Check client-side criteria if specified
+			if q.MinRating > 0 && (deal.AverageRating == nil || *deal.AverageRating < q.MinRating) {
+				continue
+			}
+			if q.MinReviews > 0 && (deal.ReviewCount == nil || *deal.ReviewCount < q.MinReviews) {
+				continue
+			}
+			if q.MaxPrice > 0 && deal.Price > q.MaxPrice {
+				continue
+			}
+			if q.Category != "" && !strings.EqualFold(deal.Category, q.Category) {
+				continue
+			}
+
 			result.Deals = append(result.Deals, deal)
 			added++
 			if limit > 0 && len(result.Deals) >= limit {
@@ -334,11 +435,13 @@ func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, li
 		// report a walk that hit a known anomaly as verified. `deals sync` then
 		// persists it, and the next diff calls the missing deals gone.
 		if added == 0 {
-			result.Truncated = true
-			result.Warnings = append(result.Warnings, fmt.Sprintf(
-				"page %d returned %d deals but no new slugs; the catalog ordering is unstable — walk stopped early",
-				page, len(deals)))
-			break
+			if q.MinRating == 0 && q.MinReviews == 0 && q.MaxPrice == 0 && q.Category == "" {
+				result.Truncated = true
+				result.Warnings = append(result.Warnings, fmt.Sprintf(
+					"page %d returned %d deals but no new slugs; the catalog ordering is unstable — walk stopped early",
+					page, len(deals)))
+				break
+			}
 		}
 		if len(deals) < perPage {
 			break
@@ -359,12 +462,34 @@ func (c *Client) FetchAllDeals(ctx context.Context, perPage int, sort string, li
 	case result.DeclaredTotal == nil:
 		result.Warnings = append(result.Warnings,
 			"catalog carried no meta.total_results; completeness could not be verified")
-	case !cappedOnPurpose && len(result.Deals) != *result.DeclaredTotal:
+	case !cappedOnPurpose && q.MinRating == 0 && q.MinReviews == 0 && q.MaxPrice == 0 && q.Category == "" && len(result.Deals) != *result.DeclaredTotal:
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"collected %d deals but the catalog declared %d; %d rows were never served",
 			len(result.Deals), *result.DeclaredTotal, *result.DeclaredTotal-len(result.Deals)))
 	}
 	return result, nil
+}
+
+// IsIdeal evaluates whether a deal meets ideal criteria (high rating and validated review volume).
+func (d Deal) IsIdeal(minRating float64, minReviews int) bool {
+	if minRating <= 0 {
+		minRating = 4.5
+	}
+	if minReviews <= 0 {
+		minReviews = 10
+	}
+	if d.AverageRating == nil || d.ReviewCount == nil {
+		return false
+	}
+	return *d.AverageRating >= minRating && *d.ReviewCount >= minReviews
+}
+
+// DiscountPercent returns the discount percentage relative to original price.
+func (d Deal) DiscountPercent() float64 {
+	if d.OriginalPrice <= 0 || d.Price >= d.OriginalPrice {
+		return 0
+	}
+	return ((d.OriginalPrice - d.Price) / d.OriginalPrice) * 100
 }
 
 // DealChange is one difference between two catalog snapshots.

@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/vecyang1/appsumo-cli/internal/appsumo"
@@ -35,6 +36,12 @@ create table if not exists deals (
 	plus_price real,
 	is_free integer,
 	listing_type text,
+	card_description text,
+	value_prop text,
+	best_for text,
+	alternative_to text,
+	integrations text,
+	subcategory text,
 	codes_remaining integer,
 	percent_claimed integer,
 	start_date text,
@@ -94,14 +101,21 @@ func (db *DB) SaveDealSnapshot(ctx context.Context, snapshotAt time.Time, deals 
 
 	current, err := tx.PrepareContext(ctx, `insert into deals (
 		slug, id, name, url, price, original_price, plus_price, is_free, listing_type,
+		card_description, value_prop, best_for, alternative_to, integrations, subcategory,
 		codes_remaining, percent_claimed, start_date, end_date, timer_reason,
 		review_count, average_rating, category, deal_group, raw_json, snapshot_at
-	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	on conflict(slug) do update set
 		id=excluded.id, name=excluded.name, url=excluded.url,
 		price=excluded.price, original_price=excluded.original_price,
 		plus_price=excluded.plus_price, is_free=excluded.is_free,
 		listing_type=excluded.listing_type,
+		card_description=excluded.card_description,
+		value_prop=excluded.value_prop,
+		best_for=excluded.best_for,
+		alternative_to=excluded.alternative_to,
+		integrations=excluded.integrations,
+		subcategory=excluded.subcategory,
 		codes_remaining=excluded.codes_remaining, percent_claimed=excluded.percent_claimed,
 		start_date=excluded.start_date, end_date=excluded.end_date,
 		timer_reason=excluded.timer_reason, review_count=excluded.review_count,
@@ -137,6 +151,8 @@ func (db *DB) SaveDealSnapshot(ctx context.Context, snapshotAt time.Time, deals 
 		if _, err := current.ExecContext(ctx,
 			deal.Slug, deal.ID, deal.Name, deal.URL,
 			deal.Price, deal.OriginalPrice, deal.PlusPrice, deal.IsFree, deal.ListingType,
+			deal.CardDescription, deal.ValueProp, stringSliceToJSON(deal.BestFor),
+			stringSliceToJSON(deal.AlternativeTo), stringSliceToJSON(deal.Integrations), deal.Subcategory,
 			nullableInt(deal.CodesRemaining), nullableInt(deal.PercentClaimed),
 			deal.StartDate, deal.EndDate, deal.TimerReason,
 			nullableInt(deal.ReviewCount), nullableFloat(deal.AverageRating),
@@ -269,4 +285,155 @@ func nullableFloat(value *float64) any {
 		return nil
 	}
 	return *value
+}
+
+func stringSliceToJSON(slice []string) string {
+	if len(slice) == 0 {
+		return ""
+	}
+	bytes, _ := json.Marshal(slice)
+	return string(bytes)
+}
+
+func jsonToStringSlice(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var res []string
+	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+		return nil
+	}
+	return res
+}
+
+// SearchDeals searches the latest deals snapshot in SQLite by query matching
+// name, slug, card_description, value_prop, best_for, alternative_to, or category.
+func (db *DB) SearchDeals(ctx context.Context, query string) ([]appsumo.Deal, error) {
+	query = strings.TrimSpace(query)
+	pattern := "%" + strings.ToLower(query) + "%"
+	rows, err := db.db.QueryContext(ctx, `select
+		slug, id, name, url, price, original_price, plus_price, is_free, listing_type,
+		card_description, value_prop, best_for, alternative_to, integrations, subcategory,
+		codes_remaining, percent_claimed, start_date, end_date, timer_reason,
+		review_count, average_rating, category, deal_group, raw_json
+		from deals
+		where lower(name) like ? or lower(slug) like ? or lower(ifnull(card_description, '')) like ?
+		   or lower(ifnull(value_prop, '')) like ? or lower(ifnull(best_for, '')) like ?
+		   or lower(ifnull(alternative_to, '')) like ? or lower(ifnull(category, '')) like ?
+		order by average_rating desc, review_count desc, name asc`,
+		pattern, pattern, pattern, pattern, pattern, pattern, pattern)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDealsRows(rows)
+}
+
+// IdealDeals queries top deals from SQLite meeting minRating and minReviews,
+// ordered by rating desc, review count desc.
+func (db *DB) IdealDeals(ctx context.Context, minRating float64, minReviews int, limit int) ([]appsumo.Deal, error) {
+	if minRating <= 0 {
+		minRating = 4.5
+	}
+	if minReviews <= 0 {
+		minReviews = 10
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := db.db.QueryContext(ctx, `select
+		slug, id, name, url, price, original_price, plus_price, is_free, listing_type,
+		card_description, value_prop, best_for, alternative_to, integrations, subcategory,
+		codes_remaining, percent_claimed, start_date, end_date, timer_reason,
+		review_count, average_rating, category, deal_group, raw_json
+		from deals
+		where average_rating >= ? and review_count >= ?
+		order by average_rating desc, review_count desc, price asc
+		limit ?`, minRating, minReviews, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDealsRows(rows)
+}
+
+func scanDealsRows(rows *sql.Rows) ([]appsumo.Deal, error) {
+	var deals []appsumo.Deal
+	for rows.Next() {
+		var (
+			deal        appsumo.Deal
+			id          sql.NullInt64
+			name        sql.NullString
+			url         sql.NullString
+			price       sql.NullFloat64
+			original    sql.NullFloat64
+			plusPrice   sql.NullFloat64
+			isFree      sql.NullInt64
+			listingType sql.NullString
+			cardDesc    sql.NullString
+			valueProp   sql.NullString
+			bestFor     sql.NullString
+			altTo       sql.NullString
+			integ       sql.NullString
+			subcat      sql.NullString
+			codes       sql.NullInt64
+			percent     sql.NullInt64
+			startDate   sql.NullString
+			endDate     sql.NullString
+			timerText   sql.NullString
+			reviewCount sql.NullInt64
+			avgRating   sql.NullFloat64
+			category    sql.NullString
+			dealGroup   sql.NullString
+			rawJSON     sql.NullString
+		)
+		if err := rows.Scan(
+			&deal.Slug, &id, &name, &url, &price, &original, &plusPrice, &isFree, &listingType,
+			&cardDesc, &valueProp, &bestFor, &altTo, &integ, &subcat,
+			&codes, &percent, &startDate, &endDate, &timerText,
+			&reviewCount, &avgRating, &category, &dealGroup, &rawJSON,
+		); err != nil {
+			return nil, err
+		}
+		deal.ID = id.Int64
+		deal.Name = name.String
+		deal.URL = url.String
+		deal.Price = price.Float64
+		deal.OriginalPrice = original.Float64
+		deal.PlusPrice = plusPrice.Float64
+		deal.IsFree = isFree.Int64 != 0
+		deal.ListingType = listingType.String
+		deal.CardDescription = cardDesc.String
+		deal.ValueProp = valueProp.String
+		deal.BestFor = jsonToStringSlice(bestFor.String)
+		deal.AlternativeTo = jsonToStringSlice(altTo.String)
+		deal.Integrations = jsonToStringSlice(integ.String)
+		deal.Subcategory = subcat.String
+		if codes.Valid {
+			c := int(codes.Int64)
+			deal.CodesRemaining = &c
+		}
+		if percent.Valid {
+			p := int(percent.Int64)
+			deal.PercentClaimed = &p
+		}
+		deal.StartDate = startDate.String
+		deal.EndDate = endDate.String
+		deal.TimerReason = timerText.String
+		if reviewCount.Valid {
+			rc := int(reviewCount.Int64)
+			deal.ReviewCount = &rc
+		}
+		if avgRating.Valid {
+			ar := avgRating.Float64
+			deal.AverageRating = &ar
+		}
+		deal.Category = category.String
+		deal.Group = dealGroup.String
+		if rawJSON.Valid && rawJSON.String != "" {
+			deal.Raw = json.RawMessage(rawJSON.String)
+		}
+		deals = append(deals, deal)
+	}
+	return deals, rows.Err()
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/vecyang1/appsumo-cli/internal/appsumo"
@@ -39,6 +40,8 @@ func (rt *runtime) dealsCmd() *cobra.Command {
 			"the catalog's own declared total and warns when it comes up short.",
 	}
 	deals.AddCommand(rt.dealsListCmd())
+	deals.AddCommand(rt.dealsSearchCmd())
+	deals.AddCommand(rt.dealsIdealCmd())
 	deals.AddCommand(rt.dealsSyncCmd())
 	deals.AddCommand(rt.dealsDiffCmd())
 	return deals
@@ -46,15 +49,29 @@ func (rt *runtime) dealsCmd() *cobra.Command {
 
 func (rt *runtime) dealsListCmd() *cobra.Command {
 	var (
-		limit    int
-		pageSize int
-		sort     string
+		limit      int
+		pageSize   int
+		sort       string
+		query      string
+		minRating  float64
+		minReviews int
+		maxPrice   float64
+		category   string
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List every live deal in the public catalog",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			result, err := rt.publicClient().FetchAllDeals(cmd.Context(), pageSize, sort, limit)
+			result, err := rt.publicClient().FetchAllDealsQuery(cmd.Context(), appsumo.DealsQuery{
+				PerPage:    pageSize,
+				Sort:       sort,
+				Limit:      limit,
+				Query:      query,
+				MinRating:  minRating,
+				MinReviews: minReviews,
+				MaxPrice:   maxPrice,
+				Category:   category,
+			})
 			if err != nil {
 				return err
 			}
@@ -80,6 +97,216 @@ func (rt *runtime) dealsListCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "Stop after N deals (0 fetches all)")
 	cmd.Flags().IntVar(&pageSize, "page-size", appsumo.DefaultDealsPageSize, "Deals per request")
 	cmd.Flags().StringVar(&sort, "sort", appsumo.DefaultDealsSort, "Server-side sort; its presence is what makes the walk complete")
+	cmd.Flags().StringVar(&query, "query", "", "Filter catalog deals by search keyword")
+	cmd.Flags().Float64Var(&minRating, "min-rating", 0, "Filter by minimum average rating")
+	cmd.Flags().IntVar(&minReviews, "min-reviews", 0, "Filter by minimum review count")
+	cmd.Flags().Float64Var(&maxPrice, "max-price", 0, "Filter by maximum price")
+	cmd.Flags().StringVar(&category, "category", "", "Filter by category slug")
+	return cmd
+}
+
+func (rt *runtime) dealsSearchCmd() *cobra.Command {
+	var (
+		limit      int
+		pageSize   int
+		sort       string
+		local      bool
+		minRating  float64
+		minReviews int
+		maxPrice   float64
+	)
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search the AppSumo deal catalog",
+		Long: "Search public AppSumo deals either live (default) or against local SQLite snapshots (--local).\n\n" +
+			"The live search uses AppSumo's Elasticsearch public deal catalog without credentials.\n" +
+			"Local search searches deal name, slug, description, value prop, alternatives, and category.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := args[0]
+			if local {
+				db, err := rt.openStore(cmd.Context())
+				if err != nil {
+					return err
+				}
+				defer db.Close()
+				deals, err := db.SearchDeals(cmd.Context(), query)
+				if err != nil {
+					return err
+				}
+				filtered := make([]appsumo.Deal, 0, len(deals))
+				for _, d := range deals {
+					if minRating > 0 && (d.AverageRating == nil || *d.AverageRating < minRating) {
+						continue
+					}
+					if minReviews > 0 && (d.ReviewCount == nil || *d.ReviewCount < minReviews) {
+						continue
+					}
+					if maxPrice > 0 && d.Price > maxPrice {
+						continue
+					}
+					filtered = append(filtered, d)
+					if limit > 0 && len(filtered) >= limit {
+						break
+					}
+				}
+				report := dealsReport{
+					Fetch: dealsFetchInfo{
+						UniqueDeals: len(filtered),
+						Sort:        "local-db",
+					},
+					Warnings: []string{},
+					Deals:    filtered,
+				}
+				return rt.emitDeals(cmd, report)
+			}
+
+			result, err := rt.publicClient().FetchAllDealsQuery(cmd.Context(), appsumo.DealsQuery{
+				Query:      query,
+				Sort:       sort,
+				PerPage:    pageSize,
+				Limit:      limit,
+				MinRating:  minRating,
+				MinReviews: minReviews,
+				MaxPrice:   maxPrice,
+			})
+			if err != nil {
+				return err
+			}
+			report := dealsReport{
+				Fetch: dealsFetchInfo{
+					UniqueDeals:   len(result.Deals),
+					DeclaredTotal: result.DeclaredTotal,
+					Complete:      result.Complete(),
+					Requests:      result.Requests,
+					Truncated:     result.Truncated,
+					Sort:          result.Sort,
+					PageSize:      result.PageSize,
+				},
+				Warnings: result.Warnings,
+				Deals:    result.Deals,
+			}
+			return rt.emitDeals(cmd, report)
+		},
+	}
+	cmd.Flags().BoolVar(&local, "local", false, "Search synced deals in local SQLite database")
+	cmd.Flags().IntVar(&limit, "limit", 20, "Stop after N deals (0 fetches all)")
+	cmd.Flags().IntVar(&pageSize, "page-size", appsumo.DefaultDealsPageSize, "Deals per request")
+	cmd.Flags().StringVar(&sort, "sort", appsumo.DealsSortRating, "Sort: rating, newest, etc.")
+	cmd.Flags().Float64Var(&minRating, "min-rating", 0, "Filter by minimum average rating")
+	cmd.Flags().IntVar(&minReviews, "min-reviews", 0, "Filter by minimum review count")
+	cmd.Flags().Float64Var(&maxPrice, "max-price", 0, "Filter by maximum price")
+	return cmd
+}
+
+func (rt *runtime) dealsIdealCmd() *cobra.Command {
+	var (
+		limit      int
+		pageSize   int
+		sort       string
+		local      bool
+		minRating  float64
+		minReviews int
+		maxPrice   float64
+		query      string
+		category   string
+	)
+	cmd := &cobra.Command{
+		Use:   "ideal",
+		Short: "Discover ideal, top-rated products from the AppSumo catalog",
+		Long: "Discover ideal products with verified high customer satisfaction and review volume.\n\n" +
+			"By default returns lifetime deals with rating >= 4.5 and at least 10 reviews,\n" +
+			"sorted by rating. Works live or against local SQLite snapshots (--local).",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if minRating <= 0 {
+				minRating = 4.5
+			}
+			if minReviews <= 0 {
+				minReviews = 10
+			}
+			if limit <= 0 {
+				limit = 10
+			}
+			if sort == "" {
+				sort = appsumo.DealsSortRating
+			}
+
+			if local {
+				db, err := rt.openStore(cmd.Context())
+				if err != nil {
+					return err
+				}
+				defer db.Close()
+				deals, err := db.IdealDeals(cmd.Context(), minRating, minReviews, limit)
+				if err != nil {
+					return err
+				}
+				filtered := make([]appsumo.Deal, 0, len(deals))
+				for _, d := range deals {
+					if query != "" && !strings.Contains(strings.ToLower(d.Name), strings.ToLower(query)) &&
+						!strings.Contains(strings.ToLower(d.CardDescription), strings.ToLower(query)) {
+						continue
+					}
+					if category != "" && !strings.EqualFold(d.Category, category) {
+						continue
+					}
+					if maxPrice > 0 && d.Price > maxPrice {
+						continue
+					}
+					filtered = append(filtered, d)
+					if len(filtered) >= limit {
+						break
+					}
+				}
+				report := dealsReport{
+					Fetch: dealsFetchInfo{
+						UniqueDeals: len(filtered),
+						Sort:        "local-db-ideal",
+					},
+					Warnings: []string{},
+					Deals:    filtered,
+				}
+				return rt.emitDeals(cmd, report)
+			}
+
+			result, err := rt.publicClient().FetchAllDealsQuery(cmd.Context(), appsumo.DealsQuery{
+				Query:      query,
+				Sort:       sort,
+				PerPage:    pageSize,
+				Limit:      limit,
+				MinRating:  minRating,
+				MinReviews: minReviews,
+				MaxPrice:   maxPrice,
+				Category:   category,
+			})
+			if err != nil {
+				return err
+			}
+			report := dealsReport{
+				Fetch: dealsFetchInfo{
+					UniqueDeals:   len(result.Deals),
+					DeclaredTotal: result.DeclaredTotal,
+					Complete:      result.Complete(),
+					Requests:      result.Requests,
+					Truncated:     result.Truncated,
+					Sort:          result.Sort,
+					PageSize:      result.PageSize,
+				},
+				Warnings: result.Warnings,
+				Deals:    result.Deals,
+			}
+			return rt.emitDeals(cmd, report)
+		},
+	}
+	cmd.Flags().BoolVar(&local, "local", false, "Query from local SQLite database instead of live API")
+	cmd.Flags().Float64Var(&minRating, "min-rating", 4.5, "Minimum average rating (e.g. 4.5)")
+	cmd.Flags().IntVar(&minReviews, "min-reviews", 10, "Minimum review count (e.g. 10)")
+	cmd.Flags().IntVar(&limit, "limit", 10, "Number of ideal deals to return (default 10)")
+	cmd.Flags().IntVar(&pageSize, "page-size", appsumo.DefaultDealsPageSize, "Deals per request")
+	cmd.Flags().StringVar(&sort, "sort", appsumo.DealsSortRating, "Server-side sort order (default 'rating')")
+	cmd.Flags().StringVar(&query, "query", "", "Filter ideal deals by keyword")
+	cmd.Flags().StringVar(&category, "category", "", "Filter ideal deals by category")
+	cmd.Flags().Float64Var(&maxPrice, "max-price", 0, "Maximum price")
 	return cmd
 }
 
