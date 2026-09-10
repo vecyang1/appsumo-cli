@@ -388,7 +388,7 @@ func TestStoreSearchDealsAndIdealDeals(t *testing.T) {
 	}
 
 	catIdeal, err := db.IdealDealsQuery(ctx, appsumo.DealsQuery{
-		Category:   "Websites",
+		Category:   "website",
 		MinRating:  4.5,
 		MinReviews: 10,
 		Limit:      5,

@@ -406,7 +406,7 @@ func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsRe
 			if q.MaxPrice > 0 && deal.Price > q.MaxPrice {
 				continue
 			}
-			if q.Category != "" && !strings.EqualFold(deal.Category, q.Category) {
+			if q.Category != "" && !strings.EqualFold(deal.Category, q.Category) && !strings.Contains(strings.ToLower(deal.Category), strings.ToLower(q.Category)) {
 				continue
 			}
 

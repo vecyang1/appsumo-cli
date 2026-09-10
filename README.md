@@ -116,7 +116,10 @@ Discover top-rated, proven "ideal" products with verified customer reviews and h
 appsumo deals ideal
 appsumo deals ideal --min-rating 4.8 --min-reviews 50 --limit 10
 appsumo deals ideal --query video --limit 5
+appsumo deals ideal --chinese
+appsumo deals ideal --format markdown
 appsumo deals ideal --local
+appsumo deals sync-notion --limit 10
 ```
 
 ## Public Product Questions
