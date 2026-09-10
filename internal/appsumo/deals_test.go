@@ -374,3 +374,142 @@ func TestFetchAllDealsLimitDoesNotWarnAboutItsOwnShortCount(t *testing.T) {
 		t.Fatalf("expected exactly the --limit warning, got %v", result.Warnings)
 	}
 }
+
+func TestFetchDealsPageQuerySendsQueryParameter(t *testing.T) {
+	var capturedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.RawQuery
+		writeJSON(t, w, map[string]any{
+			"deals": []map[string]any{dealFixture(1)},
+			"meta":  map[string]any{"total_results": 1, "page": 1, "per_page": 10},
+		})
+	}))
+	defer server.Close()
+
+	client := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+	deals, _, err := client.FetchDealsPageQuery(context.Background(), appsumo.DealsQuery{
+		Query: "seo-tool",
+		Sort:  appsumo.DealsSortRating,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deals) != 1 {
+		t.Fatalf("expected 1 deal, got %d", len(deals))
+	}
+	u, _ := url.ParseQuery(capturedQuery)
+	if u.Get("query") != "seo-tool" {
+		t.Fatalf("expected query parameter 'query=seo-tool', got %s", capturedQuery)
+	}
+	if u.Get("sort") != "rating" {
+		t.Fatalf("expected sort 'rating', got %s", u.Get("sort"))
+	}
+}
+
+func TestFetchAllDealsQueryFiltersByRatingAndReviews(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d1 := dealFixture(1)
+		d1["deal_review"] = map[string]any{"review_count": 50, "average_rating": 4.9}
+		d2 := dealFixture(2)
+		d2["deal_review"] = map[string]any{"review_count": 5, "average_rating": 4.9} // too few reviews
+		d3 := dealFixture(3)
+		d3["deal_review"] = map[string]any{"review_count": 100, "average_rating": 4.2} // rating too low
+
+		writeJSON(t, w, map[string]any{
+			"deals": []map[string]any{d1, d2, d3},
+			"meta":  map[string]any{"total_results": 3, "page": 1, "per_page": 100},
+		})
+	}))
+	defer server.Close()
+
+	client := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+	result, err := client.FetchAllDealsQuery(context.Background(), appsumo.DealsQuery{
+		MinRating:  4.5,
+		MinReviews: 10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Deals) != 1 {
+		t.Fatalf("expected 1 ideal deal, got %d", len(result.Deals))
+	}
+	if result.Deals[0].Slug != "deal-1" {
+		t.Fatalf("expected deal-1, got %s", result.Deals[0].Slug)
+	}
+}
+
+func TestDealIsIdealAndDiscountPercent(t *testing.T) {
+	rating := 4.8
+	reviews := 25
+	idealDeal := appsumo.Deal{
+		AverageRating: &rating,
+		ReviewCount:   &reviews,
+		Price:         49.0,
+		OriginalPrice: 490.0,
+	}
+	if !idealDeal.IsIdeal(4.5, 10) {
+		t.Fatalf("deal with rating 4.8 and 25 reviews should be ideal")
+	}
+	discount := idealDeal.DiscountPercent()
+	if discount < 89.9 || discount > 90.1 {
+		t.Fatalf("expected discount ~90%%, got %.2f%%", discount)
+	}
+
+	badRating := 4.2
+	nonIdeal := appsumo.Deal{
+		AverageRating: &badRating,
+		ReviewCount:   &reviews,
+	}
+	if nonIdeal.IsIdeal(4.5, 10) {
+		t.Fatalf("deal with rating 4.2 should not be ideal")
+	}
+}
+
+func TestNormaliseDealCapturesRichMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		row := dealFixture(1)
+		row["card_description"] = "Test description"
+		row["story_details"] = map[string]any{
+			"value_prop": "High value prop",
+		}
+		row["attributes"] = map[string]any{
+			"best_for":       []string{"Marketers", "Agencies"},
+			"alternative_to": []string{"Competitor A"},
+			"integrations":   []string{"Zapier"},
+			"subcategory":    []string{"SEO Tools"},
+		}
+		writeJSON(t, w, map[string]any{
+			"deals": []map[string]any{row},
+			"meta":  map[string]any{"total_results": 1, "page": 1, "per_page": 10},
+		})
+	}))
+	defer server.Close()
+
+	client := appsumo.NewClient(appsumo.ClientOptions{BaseURL: server.URL, HTTPClient: server.Client()})
+	deals, _, err := client.FetchDealsPage(context.Background(), 1, 10, "newest")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deals) != 1 {
+		t.Fatalf("expected 1 deal, got %d", len(deals))
+	}
+	d := deals[0]
+	if d.CardDescription != "Test description" {
+		t.Errorf("CardDescription = %q, want 'Test description'", d.CardDescription)
+	}
+	if d.ValueProp != "High value prop" {
+		t.Errorf("ValueProp = %q, want 'High value prop'", d.ValueProp)
+	}
+	if len(d.BestFor) != 2 || d.BestFor[0] != "Marketers" {
+		t.Errorf("BestFor = %v, want ['Marketers', 'Agencies']", d.BestFor)
+	}
+	if len(d.AlternativeTo) != 1 || d.AlternativeTo[0] != "Competitor A" {
+		t.Errorf("AlternativeTo = %v, want ['Competitor A']", d.AlternativeTo)
+	}
+	if len(d.Integrations) != 1 || d.Integrations[0] != "Zapier" {
+		t.Errorf("Integrations = %v, want ['Zapier']", d.Integrations)
+	}
+	if d.Subcategory != "SEO Tools" {
+		t.Errorf("Subcategory = %q, want 'SEO Tools'", d.Subcategory)
+	}
+}

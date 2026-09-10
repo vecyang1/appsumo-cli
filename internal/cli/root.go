@@ -184,9 +184,10 @@ func (rt *runtime) syncCmd() *cobra.Command {
 }
 
 func (rt *runtime) searchCmd() *cobra.Command {
-	return &cobra.Command{
+	var dealsOnly bool
+	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Search synced products",
+		Short: "Search synced products or deals",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := rt.openStore(cmd.Context())
@@ -194,6 +195,17 @@ func (rt *runtime) searchCmd() *cobra.Command {
 				return err
 			}
 			defer db.Close()
+			if dealsOnly {
+				deals, err := db.SearchDeals(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				report := dealsReport{
+					Fetch: dealsFetchInfo{UniqueDeals: len(deals), Sort: "local-deals"},
+					Deals: deals,
+				}
+				return rt.emitDeals(cmd, report)
+			}
 			items, err := db.SearchProducts(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -201,6 +213,8 @@ func (rt *runtime) searchCmd() *cobra.Command {
 			return rt.writeProducts(cmd.OutOrStdout(), items)
 		},
 	}
+	cmd.Flags().BoolVar(&dealsOnly, "deals", false, "Search synced deals catalog instead of owned products")
+	return cmd
 }
 
 func (rt *runtime) sqlCmd() *cobra.Command {

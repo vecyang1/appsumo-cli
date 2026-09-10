@@ -1,9 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-09-10
 
-- Track release notes in `docs/releases/<tag>.md` and publish the GitHub release body from that file. Notes typed into the release form sit inside no gate; tracked, they fall inside `TestDocumentedCommandsParse` and `TestTrackedMarkdownHasNoCredentialShapedLiterals`, which grew from 61 commands across 17 files to 66 across 18. Both were confirmed to fail on the release-notes file specifically.
-- Document the release process in `AGENTS.md`: tag the commit CI passed on rather than the branch, since `main` can move between the run finishing and the tag being cut.
+### Added
+
+- Add `appsumo deals search <query>` to search live public AppSumo deals or synced local SQLite snapshots (`--local`).
+- Add `appsumo deals ideal` to detect and filter ideal deals (rating >= 4.5, review count >= 10, customizable via `--min-rating`, `--min-reviews`, `--query`, `--category`, `--max-price`, and `--local`).
+- Add `--query`, `--min-rating`, `--min-reviews`, `--max-price`, and `--category` flags to `appsumo deals list`.
+- Add `--deals` flag to `appsumo search <query>` to query synced catalog deals from local SQLite.
+- Capture and persist rich deal metadata: `card_description`, `value_prop`, `best_for`, `alternative_to`, `integrations`, and `subcategory`.
+- Add `SearchDeals` and `IdealDeals` store query APIs with automatic column migrations on SQLite.
+- Verified live API contract: AppSumo Elasticsearch browse endpoint `/api/v2/deals/esbrowse/` accepts `query` parameter (and ignores `q`), and supports `sort=rating` for verified highest-rated deals.
 
 ## 0.2.0 - 2026-08-14
 
