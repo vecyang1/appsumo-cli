@@ -12,6 +12,10 @@
 - Add `SearchDeals` and `IdealDeals` store query APIs with automatic column migrations on SQLite.
 - Verified live API contract: AppSumo Elasticsearch browse endpoint `/api/v2/deals/esbrowse/` accepts `query` parameter (and ignores `q`), and supports `sort=rating` for verified highest-rated deals.
 
+### Fixed
+
+- Eliminate hardcoded absolute local machine paths in `CAD-20260910-appsumo-deal-monitor.md` and `sync_notion_recommendations.py` to enforce privacy and repository portability.
+
 ## 0.2.0 - 2026-08-14
 
 ### Added
