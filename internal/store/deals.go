@@ -332,24 +332,61 @@ func (db *DB) SearchDeals(ctx context.Context, query string) ([]appsumo.Deal, er
 // IdealDeals queries top deals from SQLite meeting minRating and minReviews,
 // ordered by rating desc, review count desc.
 func (db *DB) IdealDeals(ctx context.Context, minRating float64, minReviews int, limit int) ([]appsumo.Deal, error) {
+	return db.IdealDealsQuery(ctx, appsumo.DealsQuery{
+		MinRating:  minRating,
+		MinReviews: minReviews,
+		Limit:      limit,
+	})
+}
+
+// IdealDealsQuery queries deals meeting DealsQuery criteria from SQLite,
+// with all filters (minRating, minReviews, maxPrice, query, category) applied in SQL
+// prior to ordering and limit.
+func (db *DB) IdealDealsQuery(ctx context.Context, q appsumo.DealsQuery) ([]appsumo.Deal, error) {
+	minRating := q.MinRating
 	if minRating <= 0 {
 		minRating = 4.5
 	}
+	minReviews := q.MinReviews
 	if minReviews <= 0 {
 		minReviews = 10
 	}
+	limit := q.Limit
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := db.db.QueryContext(ctx, `select
+
+	query := strings.TrimSpace(q.Query)
+	pattern := "%" + strings.ToLower(query) + "%"
+
+	sqlQuery := `select
 		slug, id, name, url, price, original_price, plus_price, is_free, listing_type,
 		card_description, value_prop, best_for, alternative_to, integrations, subcategory,
 		codes_remaining, percent_claimed, start_date, end_date, timer_reason,
 		review_count, average_rating, category, deal_group, raw_json
 		from deals
-		where average_rating >= ? and review_count >= ?
-		order by average_rating desc, review_count desc, price asc
-		limit ?`, minRating, minReviews, limit)
+		where average_rating >= ? and review_count >= ?`
+	args := []any{minRating, minReviews}
+
+	if query != "" {
+		sqlQuery += ` and (lower(name) like ? or lower(slug) like ? or lower(ifnull(card_description, '')) like ?
+		               or lower(ifnull(value_prop, '')) like ? or lower(ifnull(best_for, '')) like ?
+		               or lower(ifnull(alternative_to, '')) like ? or lower(ifnull(category, '')) like ?)`
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
+	}
+	if q.Category != "" {
+		sqlQuery += ` and lower(category) = lower(?)`
+		args = append(args, q.Category)
+	}
+	if q.MaxPrice > 0 {
+		sqlQuery += ` and price <= ?`
+		args = append(args, q.MaxPrice)
+	}
+
+	sqlQuery += ` order by average_rating desc, review_count desc, price asc limit ?`
+	args = append(args, limit)
+
+	rows, err := db.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
 		return nil, err
 	}

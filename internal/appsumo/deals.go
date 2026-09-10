@@ -54,6 +54,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -350,10 +351,10 @@ func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsRe
 	if perPage <= 0 {
 		perPage = DefaultDealsPageSize
 	}
-	sort := firstNonBlank(q.Sort, DefaultDealsSort)
+	sortVal := firstNonBlank(q.Sort, DefaultDealsSort)
 	result := &DealsResult{
 		Warnings: []string{},
-		Sort:     sort,
+		Sort:     sortVal,
 		PageSize: perPage,
 		Query:    q.Query,
 	}
@@ -361,16 +362,14 @@ func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsRe
 	duplicates := 0
 	limit := q.Limit
 
-	// See fetchThread: a caller-requested cap is expected and must not warn about
-	// its own short count, while an anomaly-triggered stop should report the
-	// shortfall. Both mark the walk Truncated.
 	cappedOnPurpose := false
+	hasClientFilter := q.MinRating > 0 || q.MinReviews > 0 || q.MaxPrice > 0 || q.Category != ""
 
 	for page := 1; page <= maxDealsRequests; page++ {
 		curQuery := q
 		curQuery.Page = page
 		curQuery.PerPage = perPage
-		curQuery.Sort = sort
+		curQuery.Sort = sortVal
 		deals, meta, err := c.FetchDealsPageQuery(ctx, curQuery)
 		if err != nil {
 			return nil, err
@@ -384,7 +383,7 @@ func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsRe
 			break
 		}
 
-		added := 0
+		newUnseen := 0
 		for _, deal := range deals {
 			key := deal.Slug
 			if key == "" {
@@ -395,6 +394,7 @@ func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsRe
 				continue
 			}
 			seen[key] = struct{}{}
+			newUnseen++
 
 			// Check client-side criteria if specified
 			if q.MinRating > 0 && (deal.AverageRating == nil || *deal.AverageRating < q.MinRating) {
@@ -411,37 +411,25 @@ func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsRe
 			}
 
 			result.Deals = append(result.Deals, deal)
-			added++
-			if limit > 0 && len(result.Deals) >= limit {
+			if !hasClientFilter && limit > 0 && len(result.Deals) >= limit {
 				break
 			}
 		}
 
-		if limit > 0 && len(result.Deals) >= limit {
+		if !hasClientFilter && limit > 0 && len(result.Deals) >= limit {
 			result.Truncated = true
 			cappedOnPurpose = true
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
 				"stopped at --limit %d; more deals exist", limit))
 			break
 		}
-		// A page of slugs we already hold means the ordering is not stable and
-		// paging further would keep re-reading the same window.
-		//
-		// Truncated is set here for the same reason it is set on the other two
-		// early exits: the walk stopped for a reason other than exhausting the
-		// catalog. Without it, Complete() would fall back to comparing the
-		// collected count against a total supplied by the very response stream
-		// that just proved it re-serves windows — and a coincidental match would
-		// report a walk that hit a known anomaly as verified. `deals sync` then
-		// persists it, and the next diff calls the missing deals gone.
-		if added == 0 {
-			if q.MinRating == 0 && q.MinReviews == 0 && q.MaxPrice == 0 && q.Category == "" {
-				result.Truncated = true
-				result.Warnings = append(result.Warnings, fmt.Sprintf(
-					"page %d returned %d deals but no new slugs; the catalog ordering is unstable — walk stopped early",
-					page, len(deals)))
-				break
-			}
+
+		if newUnseen == 0 {
+			result.Truncated = true
+			result.Warnings = append(result.Warnings, fmt.Sprintf(
+				"page %d returned %d deals but no new slugs; the catalog ordering is unstable — walk stopped early",
+				page, len(deals)))
+			break
 		}
 		if len(deals) < perPage {
 			break
@@ -458,11 +446,47 @@ func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsRe
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"catalog served %d duplicate rows across pages; deduplicated by slug", duplicates))
 	}
+
+	// Deterministically sort candidates when ranking by rating or client filters are active.
+	if sortVal == DealsSortRating || hasClientFilter {
+		sort.SliceStable(result.Deals, func(i, j int) bool {
+			rI, rJ := 0.0, 0.0
+			if result.Deals[i].AverageRating != nil {
+				rI = *result.Deals[i].AverageRating
+			}
+			if result.Deals[j].AverageRating != nil {
+				rJ = *result.Deals[j].AverageRating
+			}
+			if rI != rJ {
+				return rI > rJ
+			}
+			cI, cJ := 0, 0
+			if result.Deals[i].ReviewCount != nil {
+				cI = *result.Deals[i].ReviewCount
+			}
+			if result.Deals[j].ReviewCount != nil {
+				cJ = *result.Deals[j].ReviewCount
+			}
+			if cI != cJ {
+				return cI > cJ
+			}
+			return result.Deals[i].Price < result.Deals[j].Price
+		})
+	}
+
+	if hasClientFilter && limit > 0 && len(result.Deals) > limit {
+		result.Deals = result.Deals[:limit]
+		result.Truncated = true
+		cappedOnPurpose = true
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"stopped at --limit %d; more deals exist", limit))
+	}
+
 	switch {
 	case result.DeclaredTotal == nil:
 		result.Warnings = append(result.Warnings,
 			"catalog carried no meta.total_results; completeness could not be verified")
-	case !cappedOnPurpose && q.MinRating == 0 && q.MinReviews == 0 && q.MaxPrice == 0 && q.Category == "" && len(result.Deals) != *result.DeclaredTotal:
+	case !cappedOnPurpose && !hasClientFilter && q.Query == "" && len(result.Deals) != *result.DeclaredTotal:
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"collected %d deals but the catalog declared %d; %d rows were never served",
 			len(result.Deals), *result.DeclaredTotal, *result.DeclaredTotal-len(result.Deals)))
@@ -490,6 +514,17 @@ func (d Deal) DiscountPercent() float64 {
 		return 0
 	}
 	return ((d.OriginalPrice - d.Price) / d.OriginalPrice) * 100
+}
+
+// DealURL returns canonical product URL on AppSumo.
+func (d Deal) DealURL() string {
+	if d.Slug != "" {
+		return "https://appsumo.com/products/" + d.Slug + "/"
+	}
+	if d.URL != "" {
+		return d.URL
+	}
+	return ""
 }
 
 // DealChange is one difference between two catalog snapshots.

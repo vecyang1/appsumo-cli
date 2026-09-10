@@ -11,6 +11,7 @@
 - Capture and persist rich deal metadata: `card_description`, `value_prop`, `best_for`, `alternative_to`, `integrations`, and `subcategory`.
 - Add `SearchDeals` and `IdealDeals` store query APIs with automatic column migrations on SQLite.
 - Verified live API contract: AppSumo Elasticsearch browse endpoint `/api/v2/deals/esbrowse/` accepts `query` parameter (and ignores `q`), and supports `sort=rating` for verified highest-rated deals.
+- Add `appsumo deals sync-notion` command and portable `scripts/run_appsumo_monitor.sh` cadence runner.
 
 ### Fixed
 

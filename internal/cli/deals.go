@@ -42,6 +42,7 @@ func (rt *runtime) dealsCmd() *cobra.Command {
 	deals.AddCommand(rt.dealsListCmd())
 	deals.AddCommand(rt.dealsSearchCmd())
 	deals.AddCommand(rt.dealsIdealCmd())
+	deals.AddCommand(rt.dealsSyncNotionCmd())
 	deals.AddCommand(rt.dealsSyncCmd())
 	deals.AddCommand(rt.dealsDiffCmd())
 	return deals
@@ -210,6 +211,8 @@ func (rt *runtime) dealsIdealCmd() *cobra.Command {
 		maxPrice   float64
 		query      string
 		category   string
+		chinese    bool
+		format     string
 	)
 	cmd := &cobra.Command{
 		Use:   "ideal",
@@ -237,34 +240,36 @@ func (rt *runtime) dealsIdealCmd() *cobra.Command {
 					return err
 				}
 				defer db.Close()
-				deals, err := db.IdealDeals(cmd.Context(), minRating, minReviews, limit)
+				deals, err := db.IdealDealsQuery(cmd.Context(), appsumo.DealsQuery{
+					Query:      query,
+					Category:   category,
+					MaxPrice:   maxPrice,
+					MinRating:  minRating,
+					MinReviews: minReviews,
+					Limit:      limit,
+				})
 				if err != nil {
 					return err
 				}
-				filtered := make([]appsumo.Deal, 0, len(deals))
-				for _, d := range deals {
-					if query != "" && !strings.Contains(strings.ToLower(d.Name), strings.ToLower(query)) &&
-						!strings.Contains(strings.ToLower(d.CardDescription), strings.ToLower(query)) {
-						continue
-					}
-					if category != "" && !strings.EqualFold(d.Category, category) {
-						continue
-					}
-					if maxPrice > 0 && d.Price > maxPrice {
-						continue
-					}
-					filtered = append(filtered, d)
-					if len(filtered) >= limit {
-						break
-					}
-				}
 				report := dealsReport{
 					Fetch: dealsFetchInfo{
-						UniqueDeals: len(filtered),
+						UniqueDeals: len(deals),
 						Sort:        "local-db-ideal",
 					},
 					Warnings: []string{},
-					Deals:    filtered,
+					Deals:    deals,
+				}
+				if rt.asJSON {
+					return writeRedactedJSON(cmd.OutOrStdout(), report)
+				}
+				if chinese {
+					return writeIdealDealsChinese(cmd.OutOrStdout(), report, strings.EqualFold(format, "markdown"))
+				}
+				if strings.EqualFold(format, "markdown") {
+					return writeIdealDealsChineseMarkdown(cmd.OutOrStdout(), report)
+				}
+				if strings.EqualFold(format, "card") {
+					return writeIdealDealsChinese(cmd.OutOrStdout(), report, false)
 				}
 				return rt.emitDeals(cmd, report)
 			}
@@ -295,6 +300,18 @@ func (rt *runtime) dealsIdealCmd() *cobra.Command {
 				Warnings: result.Warnings,
 				Deals:    result.Deals,
 			}
+			if rt.asJSON {
+				return writeRedactedJSON(cmd.OutOrStdout(), report)
+			}
+			if chinese {
+				return writeIdealDealsChinese(cmd.OutOrStdout(), report, strings.EqualFold(format, "markdown"))
+			}
+			if strings.EqualFold(format, "markdown") {
+				return writeIdealDealsChineseMarkdown(cmd.OutOrStdout(), report)
+			}
+			if strings.EqualFold(format, "card") {
+				return writeIdealDealsChinese(cmd.OutOrStdout(), report, false)
+			}
 			return rt.emitDeals(cmd, report)
 		},
 	}
@@ -307,6 +324,8 @@ func (rt *runtime) dealsIdealCmd() *cobra.Command {
 	cmd.Flags().StringVar(&query, "query", "", "Filter ideal deals by keyword")
 	cmd.Flags().StringVar(&category, "category", "", "Filter ideal deals by category")
 	cmd.Flags().Float64Var(&maxPrice, "max-price", 0, "Maximum price")
+	cmd.Flags().BoolVarP(&chinese, "chinese", "c", false, "Output deal recommendations in Chinese")
+	cmd.Flags().StringVar(&format, "format", "table", "Output format: table, card, markdown")
 	return cmd
 }
 
@@ -430,23 +449,145 @@ func (rt *runtime) emitDeals(cmd *cobra.Command, report dealsReport) error {
 }
 
 func writeDealsText(out io.Writer, report dealsReport) error {
-	declared := "unknown"
-	if report.Fetch.DeclaredTotal != nil {
-		declared = fmt.Sprintf("%d", *report.Fetch.DeclaredTotal)
-	}
-	if _, err := fmt.Fprintf(out, "%d of %s live deals in %d requests (sort=%s)\n\n",
-		report.Fetch.UniqueDeals, declared, report.Fetch.Requests, report.Fetch.Sort); err != nil {
-		return err
+	if strings.HasPrefix(report.Fetch.Sort, "local") {
+		if _, err := fmt.Fprintf(out, "%d deals in local database (sort=%s)\n\n",
+			report.Fetch.UniqueDeals, report.Fetch.Sort); err != nil {
+			return err
+		}
+	} else {
+		declared := "unknown"
+		if report.Fetch.DeclaredTotal != nil {
+			declared = fmt.Sprintf("%d", *report.Fetch.DeclaredTotal)
+		}
+		if _, err := fmt.Fprintf(out, "%d of %s live deals in %d requests (sort=%s)\n\n",
+			report.Fetch.UniqueDeals, declared, report.Fetch.Requests, report.Fetch.Sort); err != nil {
+			return err
+		}
 	}
 	for _, deal := range report.Deals {
 		rating := "-"
 		if deal.AverageRating != nil {
-			rating = fmt.Sprintf("%.2f", *deal.AverageRating)
+			if deal.ReviewCount != nil && *deal.ReviewCount > 0 {
+				rating = fmt.Sprintf("%.2f★(%d)", *deal.AverageRating, *deal.ReviewCount)
+			} else {
+				rating = fmt.Sprintf("%.2f★", *deal.AverageRating)
+			}
 		}
-		if _, err := fmt.Fprintf(out, "%-38s\t$%-8.2f\t%-4s\t%-12s\t%s\n",
+		if _, err := fmt.Fprintf(out, "%-38s\t$%-8.2f\t%-14s\t%-12s\t%s\n",
 			truncate(deal.Slug, 38), deal.Price, rating, truncate(deal.ListingType, 12), stockLabel(deal)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func writeIdealDealsChinese(out io.Writer, report dealsReport, markdown bool) error {
+	if markdown {
+		return writeIdealDealsChineseMarkdown(out, report)
+	}
+	if len(report.Deals) == 0 {
+		_, err := fmt.Fprintln(out, "未找到符合条件的优质 Deal。")
+		return err
+	}
+	header := fmt.Sprintf("=== 精选 AppSumo 优质 Deal 推荐榜单（共 %d 款）===\n\n", len(report.Deals))
+	if _, err := fmt.Fprint(out, header); err != nil {
+		return err
+	}
+	for i, d := range report.Deals {
+		name := d.Name
+		if name == "" {
+			name = d.Slug
+		}
+		rating := "-"
+		reviews := 0
+		if d.AverageRating != nil {
+			rating = fmt.Sprintf("%.2f", *d.AverageRating)
+		}
+		if d.ReviewCount != nil {
+			reviews = *d.ReviewCount
+		}
+		discountStr := ""
+		if pct := d.DiscountPercent(); pct > 0 {
+			discountStr = fmt.Sprintf(" (官方原价 $%.2f，立省 %.0f%%)", d.OriginalPrice, pct)
+		}
+		link := d.DealURL()
+
+		fmt.Fprintf(out, "[%d] %s (%s)\n", i+1, name, d.Slug)
+		fmt.Fprintf(out, "    ★ %s 星 (%d 条买家真实评价) | 终身价格: $%.2f%s\n", rating, reviews, d.Price, discountStr)
+		if d.Category != "" {
+			fmt.Fprintf(out, "    📂 分类: %s | 授权模式: %s\n", d.Category, d.ListingType)
+		}
+		if link != "" {
+			fmt.Fprintf(out, "    🔗 直达链接: %s\n", link)
+		}
+		desc := d.ValueProp
+		if desc == "" {
+			desc = d.CardDescription
+		}
+		if desc != "" {
+			fmt.Fprintf(out, "    💡 核心亮点: %s\n", desc)
+		}
+		if len(d.BestFor) > 0 {
+			fmt.Fprintf(out, "    🎯 适合人群: %s\n", strings.Join(d.BestFor, ", "))
+		}
+		if len(d.AlternativeTo) > 0 {
+			fmt.Fprintf(out, "    🔄 对标知名竞品: %s\n", strings.Join(d.AlternativeTo, ", "))
+		}
+		if d.CodesRemaining != nil {
+			fmt.Fprintf(out, "    📦 授权库存: 剩余 %d codes\n", *d.CodesRemaining)
+		}
+		fmt.Fprintln(out)
+	}
+	return nil
+}
+
+func writeIdealDealsChineseMarkdown(out io.Writer, report dealsReport) error {
+	if len(report.Deals) == 0 {
+		_, err := fmt.Fprintln(out, "_未找到符合条件的优质 Deal。_")
+		return err
+	}
+	fmt.Fprintf(out, "## 精选 AppSumo 优质 Deal 推荐榜单（共 %d 款）\n\n", len(report.Deals))
+	for i, d := range report.Deals {
+		name := d.Name
+		if name == "" {
+			name = d.Slug
+		}
+		rating := "-"
+		reviews := 0
+		if d.AverageRating != nil {
+			rating = fmt.Sprintf("%.2f", *d.AverageRating)
+		}
+		if d.ReviewCount != nil {
+			reviews = *d.ReviewCount
+		}
+		discountStr := ""
+		if pct := d.DiscountPercent(); pct > 0 {
+			discountStr = fmt.Sprintf(" (原价 `$%.2f`，立省 **%.0f%%**)", d.OriginalPrice, pct)
+		}
+		link := d.DealURL()
+
+		fmt.Fprintf(out, "### %d. [%s](%s) — ★ %s (%d 条评价)\n\n", i+1, name, link, rating, reviews)
+		fmt.Fprintf(out, "- **终身价格**: `$%.2f`%s\n", d.Price, discountStr)
+		if d.Category != "" {
+			fmt.Fprintf(out, "- **所属分类**: %s (%s)\n", d.Category, d.ListingType)
+		}
+		desc := d.ValueProp
+		if desc == "" {
+			desc = d.CardDescription
+		}
+		if desc != "" {
+			fmt.Fprintf(out, "- **核心亮点**: %s\n", desc)
+		}
+		if len(d.BestFor) > 0 {
+			fmt.Fprintf(out, "- **适用人群**: %s\n", strings.Join(d.BestFor, ", "))
+		}
+		if len(d.AlternativeTo) > 0 {
+			fmt.Fprintf(out, "- **对标知名竞品**: *%s*\n", strings.Join(d.AlternativeTo, ", "))
+		}
+		if d.CodesRemaining != nil {
+			fmt.Fprintf(out, "- **授权库存**: 剩余 `%d` codes\n", *d.CodesRemaining)
+		}
+		fmt.Fprintln(out)
 	}
 	return nil
 }

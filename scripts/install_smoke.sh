@@ -55,6 +55,9 @@ commands=(
   "products search"
   "products export"
   "deals list"
+  "deals search"
+  "deals ideal"
+  "deals sync-notion"
   "deals sync"
   "deals diff"
   "reviews"
@@ -76,10 +79,11 @@ done
 # A packaging fault often first shows up on a failure path, as an unhandled
 # import/link error that reads like an application bug. Exercise the commands
 # whose required argument is missing; each must refuse, not crash and not succeed.
-needs_argument=("reviews" "questions" "search" "sql")
+needs_argument=("reviews" "questions" "search" "sql" "deals search")
 for command in "${needs_argument[@]}"; do
   set +e
-  "$binary" "$command" >/dev/null 2>&1
+  # shellcheck disable=SC2086
+  "$binary" $command >/dev/null 2>&1
   status=$?
   set -e
   if [ "$status" -eq 0 ]; then

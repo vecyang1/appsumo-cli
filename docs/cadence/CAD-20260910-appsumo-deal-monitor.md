@@ -12,9 +12,11 @@
 - `Project Ref`: `26.05.23-appsumo-cli`
 - `Execution Root`: `$PROJECT_DIR`
 - `Root Alias`: `{A_CODING}/26.05.23-appsumo-cli`
-- `Primary Runtime`: LaunchAgent / local cron
-- `Runtime Systems`: launchd, antigravity
-- `Runtime Locator`: local cron / launchd `com.appsumo.deal-monitor` (root: `26.05.23-appsumo-cli`)
+- `Primary Runtime`: LaunchAgent
+- `Runtime Systems`: launchd
+- `Runtime Locator`: `~/Library/LaunchAgents/com.vec.appsumo-deal-monitor.plist`
+- `Where scheduled`: macOS launchd → `com.vec.appsumo-deal-monitor` (root: `26.05.23-appsumo-cli`)
+- `Runner Script`: `scripts/run_appsumo_monitor.sh`
 - `Schedule Frequency`: daily
 - `Schedule Expression`: `0 9 * * *` (09:00 AM UTC+7)
 - `Timezone`: Asia/Bangkok
@@ -52,5 +54,9 @@
    ```
 4. Sync recommendations to Notion:
    ```bash
-   python3 scripts/sync_notion_recommendations.py
+   ./appsumo deals sync-notion --min-rating 4.8 --min-reviews 50 --limit 10
+   ```
+5. Or run the unified automated monitor script:
+   ```bash
+   bash scripts/run_appsumo_monitor.sh
    ```
