@@ -10,7 +10,7 @@
 - `Created By`: Vec + Antigravity Agent
 - `Planned By`: Antigravity Pair Programmer
 - `Project Ref`: `26.05.23-appsumo-cli`
-- `Execution Root`: `/Users/vecsatfoxmailcom/Documents/A-coding/26.05.23-appsumo-cli`
+- `Execution Root`: `$PROJECT_DIR`
 - `Root Alias`: `{A_CODING}/26.05.23-appsumo-cli`
 - `Primary Runtime`: LaunchAgent / local cron
 - `Runtime Systems`: launchd, antigravity
@@ -30,7 +30,7 @@
 - `Side Effect Level`: low (read-only crawl of public catalog, local SQLite writes, Notion append)
 - `Requires Human Review`: false
 - `Network Required`: true (appsumo.com public API, api.notion.com)
-- `Configuration Owner`: `~/.gemini/antigravity/skills/notion-mcp-connector/.env`
+- `Configuration Owner`: `$NOTION_ENV_PATH` / `.env`
 - `Checkpoint Path`: `.run/cadence/CAD-20260910-appsumo-deal-monitor/state.json`
 - `Success Marker Pattern`: `runs/YYYY-MM-DD.json`
 - `Resume Policy`: restart_from_last_successful_sync

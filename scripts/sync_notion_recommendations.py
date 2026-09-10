@@ -10,9 +10,10 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 NOTION_PAGE_ID = "3d3e1b43-2393-81f1-a87d-c75cb340e5e1"
-ENV_PATH = "/Users/vecsatfoxmailcom/.gemini/antigravity/skills/notion-mcp-connector/.env"
+ENV_PATH = Path.home() / ".gemini/antigravity/skills/notion-mcp-connector/.env"
 
 def get_notion_token():
     token = os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY")
