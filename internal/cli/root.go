@@ -60,6 +60,7 @@ func NewRoot(options Options) *cobra.Command {
 	cmd.AddCommand(rt.dealsCmd())
 	cmd.AddCommand(rt.reviewsCmd())
 	cmd.AddCommand(rt.questionsCmd())
+	cmd.AddCommand(rt.scrapeCmd())
 	cmd.AddCommand(rt.syncCmd())
 	cmd.AddCommand(rt.searchCmd())
 	cmd.AddCommand(rt.sqlCmd())

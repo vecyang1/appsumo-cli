@@ -36,6 +36,7 @@ with no credentials configured and buyer credentials never reach a crawl.
 - `appsumo deals diff`
 - `appsumo reviews <product-slug>`
 - `appsumo questions <product-slug>`
+- `appsumo scrape <product-slug-or-url>` (aggregate specifications, tiers, FAQs, reviews & questions into JSON and Markdown dossier)
 
 **Local database**
 

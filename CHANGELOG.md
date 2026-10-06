@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - 2026-10-07
+
+### Added
+
+- Add `appsumo scrape <slug-or-url>` subcommand to automatically aggregate, scrape, save, and cache complete AppSumo product packages (deal specifications, company background, founders, 6 licensing tiers, terms & conditions, FAQs, founder posts, all 161 public reviews, and 184 public questions) into structured JSON files (`deal.json`, `reviews.json`, `questions.json`, `faqs.json`, `founders.json`, `full_archive.json`) and a comprehensive Markdown dossier (`DOSSIER.md` / `SUMMARY.md`).
+- Add `CleanProductSlug` to flexibly extract product slugs from arbitrary full URLs (`https://appsumo.com/products/poppy-ai/`), review paths, or plain slug strings.
+- Add resilient HTTP client transport with increased TLS handshake timeout (25s) and automatic exponential retry on transient network errors in `getHTML` and `getJSON`.
+- Add global PATH exposure via symlink at `~/.local/bin/appsumo`.
+- Add standalone Python CLI harness `scripts/appsumo_scraper.py`.
+
 ## 0.3.0 - 2026-09-10
 
 ### Added

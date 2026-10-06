@@ -27,6 +27,25 @@ type Client struct {
 	http    *http.Client
 }
 
+func defaultHTTPClient() *http.Client {
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   25 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return &http.Client{
+		Transport: tr,
+		Timeout:   45 * time.Second,
+	}
+}
+
 func NewClient(options ClientOptions) *Client {
 	baseURL := strings.TrimRight(options.BaseURL, "/")
 	if baseURL == "" {
@@ -34,7 +53,7 @@ func NewClient(options ClientOptions) *Client {
 	}
 	httpClient := options.HTTPClient
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = defaultHTTPClient()
 	}
 	return &Client{
 		baseURL: baseURL,
@@ -113,57 +132,77 @@ func (c *Client) FetchProductsCSV(ctx context.Context) ([]byte, error) {
 // getHTML reads a rendered page body. Public product pages embed their data as
 // a __NEXT_DATA__ island, which is the only published source for a slug's deal id.
 func (c *Client) getHTML(ctx context.Context, path string) ([]byte, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			}
+		}
+		req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		resp, err := c.http.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, readErr := readBody(resp.Body, maxResponseBodyBytes)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("GET %s returned HTTP %d", req.URL.Path, resp.StatusCode)
+		}
+		return body, nil
 	}
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, readErr := readBody(resp.Body, maxResponseBodyBytes)
-	if readErr != nil {
-		return nil, readErr
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GET %s returned HTTP %d", req.URL.Path, resp.StatusCode)
-	}
-	return body, nil
+	return nil, lastErr
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, query map[string]string, target any) error {
-	req, err := c.newRequest(ctx, http.MethodGet, path, query)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			}
+		}
+		req, err := c.newRequest(ctx, http.MethodGet, path, query)
+		if err != nil {
+			return err
+		}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, readErr := readBody(resp.Body, maxResponseBodyBytes)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("GET %s returned HTTP %d", req.URL.Path, resp.StatusCode)
+		}
+		contentType := resp.Header.Get("Content-Type")
+		if !strings.Contains(strings.ToLower(contentType), "application/json") {
+			return fmt.Errorf("GET %s returned %s instead of json", req.URL.Path, describeContentType(contentType))
+		}
+		if err := json.Unmarshal(body, target); err != nil {
+			return fmt.Errorf("decode %s: %w", req.URL.Path, err)
+		}
+		return nil
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, readErr := readBody(resp.Body, maxResponseBodyBytes)
-	if readErr != nil {
-		return readErr
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("GET %s returned HTTP %d", req.URL.Path, resp.StatusCode)
-	}
-	contentType := resp.Header.Get("Content-Type")
-	if !strings.Contains(strings.ToLower(contentType), "application/json") {
-		// Say only what every caller of this shared code shares. AppSumo answers
-		// an unauthenticated account request with an HTML sign-in page, so this
-		// usually is an auth problem — but `deals`, `reviews`, and `questions`
-		// route through here too and are never authenticated. Naming a cause
-		// three of the callers do not have sends those readers looking in the
-		// wrong place. The account commands attach the remedy themselves.
-		return fmt.Errorf("GET %s returned %s instead of json", req.URL.Path, describeContentType(contentType))
-	}
-	if err := json.Unmarshal(body, target); err != nil {
-		return fmt.Errorf("decode %s: %w", req.URL.Path, err)
-	}
-	return nil
+	return lastErr
 }
 
 func (c *Client) newRequest(ctx context.Context, method, path string, query map[string]string) (*http.Request, error) {

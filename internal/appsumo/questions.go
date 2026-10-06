@@ -52,6 +52,9 @@ type Question struct {
 	Children    []Question   `json:"children"`
 }
 
+// QuestionsQuery is the questions-surface name for the shared thread query.
+type QuestionsQuery = ThreadQuery
+
 type QuestionsEnvelope struct {
 	Comments []Question `json:"comments"`
 	Meta     ThreadMeta `json:"meta"`
