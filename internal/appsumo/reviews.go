@@ -32,8 +32,8 @@ type ReviewUser struct {
 	ID              flexInt64 `json:"id"`
 	Username        string    `json:"username"`
 	DateJoined      string    `json:"date_joined"`
-	DealsPurchased  *int      `json:"deals_purchased"`
-	CommentDisabled *bool     `json:"comment_blacklist"`
+	DealsPurchased  *flexInt  `json:"deals_purchased"`
+	CommentDisabled *flexBool `json:"comment_blacklist"`
 }
 
 type Review struct {
@@ -46,13 +46,13 @@ type Review struct {
 	Rating         *int       `json:"rating"`
 	Created        string     `json:"created"`
 	Modified       string     `json:"modified"`
-	UpVotes        *int       `json:"up_votes"`
-	DownVotes      *int       `json:"down_votes"`
-	WouldRecommend *bool      `json:"would_recommend"`
-	Incentivized   *bool      `json:"incentivized"`
-	Purchased      *bool      `json:"purchased"`
-	Approved       *bool      `json:"approved"`
-	Edited         *bool      `json:"edited"`
+	UpVotes        *flexInt   `json:"up_votes"`
+	DownVotes      *flexInt   `json:"down_votes"`
+	WouldRecommend *flexBool  `json:"would_recommend"`
+	Incentivized   *flexBool  `json:"incentivized"`
+	Purchased      *flexBool  `json:"purchased"`
+	Approved       *flexBool  `json:"approved"`
+	Edited         *flexBool  `json:"edited"`
 	Status         string     `json:"status"`
 	DisplayPath    string     `json:"display_path"`
 	User           ReviewUser `json:"user"`

@@ -74,7 +74,15 @@ type commentRow struct {
 	raw         any
 }
 
-// SaveReviews flattens and stores a review crawl for one product.
+func flexIntToInt(v *appsumo.FlexInt) *int {
+	if v == nil {
+		return nil
+	}
+	i := int(*v)
+	return &i
+}
+
+// SaveReviews flattens and stores a reviews crawl for one product.
 func (db *DB) SaveReviews(ctx context.Context, productSlug string, reviews []appsumo.Review) (int, error) {
 	var rows []commentRow
 	var walk func(items []appsumo.Review)
@@ -85,7 +93,7 @@ func (db *DB) SaveReviews(ctx context.Context, productSlug string, reviews []app
 				dealID: int64(review.DealID), parentID: reviewParent(review),
 				level: review.Level, title: review.Title, body: review.Comment,
 				rating: review.Rating, created: review.Created, modified: review.Modified,
-				upVotes: review.UpVotes, downVotes: review.DownVotes,
+				upVotes: flexIntToInt(review.UpVotes), downVotes: flexIntToInt(review.DownVotes),
 				status: review.Status, displayPath: review.DisplayPath,
 				username: review.User.Username, raw: review,
 			})
@@ -108,7 +116,7 @@ func (db *DB) SaveQuestions(ctx context.Context, productSlug string, questions [
 				dealID: int64(question.DealID), parentID: questionParent(question),
 				level: question.Level, title: question.Title, body: question.Comment,
 				created: question.Created, modified: question.Modified,
-				upVotes: question.UpVotes, downVotes: question.DownVotes,
+				upVotes: flexIntToInt(question.UpVotes), downVotes: flexIntToInt(question.DownVotes),
 				status: question.Status, displayPath: question.DisplayPath,
 				username: question.User.Username, answered: &answered, raw: question,
 			})

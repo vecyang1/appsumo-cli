@@ -513,10 +513,10 @@ func (a *FullProductArchive) GenerateMarkdownDossier() string {
 		sort.Slice(reviewsByVotes, func(i, j int) bool {
 			vi, vj := 0, 0
 			if reviewsByVotes[i].UpVotes != nil {
-				vi = *reviewsByVotes[i].UpVotes
+				vi = int(*reviewsByVotes[i].UpVotes)
 			}
 			if reviewsByVotes[j].UpVotes != nil {
-				vj = *reviewsByVotes[j].UpVotes
+				vj = int(*reviewsByVotes[j].UpVotes)
 			}
 			return vi > vj
 		})
@@ -534,7 +534,7 @@ func (a *FullProductArchive) GenerateMarkdownDossier() string {
 			}
 			up := 0
 			if rev.UpVotes != nil {
-				up = *rev.UpVotes
+				up = int(*rev.UpVotes)
 			}
 			b.WriteString(fmt.Sprintf("#### [%d Tacos] %s (👍 %d upvotes)\n", rating, rev.Title, up))
 			b.WriteString(fmt.Sprintf("- **Reviewer**: `%s` (Deals purchased: %s, Joined: %s)\n",
@@ -559,7 +559,7 @@ func (a *FullProductArchive) GenerateMarkdownDossier() string {
 				}
 				up := 0
 				if rev.UpVotes != nil {
-					up = *rev.UpVotes
+					up = int(*rev.UpVotes)
 				}
 				b.WriteString(fmt.Sprintf("- **[%d Tacos] %s** (by `%s`, 👍 %d)\n", rating, rev.Title, rev.User.Username, up))
 				b.WriteString(fmt.Sprintf("  - *Date*: %s\n", truncateStr(rev.Created, 10)))
@@ -616,7 +616,7 @@ func oneLineStr(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func flexIntString(val *int) string {
+func flexIntString(val *flexInt) string {
 	if val == nil {
 		return "N/A"
 	}

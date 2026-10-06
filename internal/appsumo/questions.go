@@ -24,8 +24,8 @@ type QuestionUser struct {
 	ID             flexInt64 `json:"id"`
 	Username       string    `json:"username"`
 	DateJoined     string    `json:"date_joined"`
-	DealsPurchased *int      `json:"deals_purchased"`
-	HasPlus        *bool     `json:"has_plus"`
+	DealsPurchased *flexInt  `json:"deals_purchased"`
+	HasPlus        *flexBool `json:"has_plus"`
 }
 
 type Question struct {
@@ -37,14 +37,14 @@ type Question struct {
 	Comment     string       `json:"comment"`
 	Created     string       `json:"created"`
 	Modified    string       `json:"modified"`
-	UpVotes     *int         `json:"up_votes"`
-	DownVotes   *int         `json:"down_votes"`
-	Pinned      *bool        `json:"pinned"`
-	Resolved    *bool        `json:"resolved"`
-	Approved    *bool        `json:"approved"`
-	Edited      *bool        `json:"edited"`
-	Followup    *bool        `json:"followup"`
-	Purchased   *bool        `json:"purchased"`
+	UpVotes     *flexInt     `json:"up_votes"`
+	DownVotes   *flexInt     `json:"down_votes"`
+	Pinned      *flexBool    `json:"pinned"`
+	Resolved    *flexBool    `json:"resolved"`
+	Approved    *flexBool    `json:"approved"`
+	Edited      *flexBool    `json:"edited"`
+	Followup    *flexBool    `json:"followup"`
+	Purchased   *flexBool    `json:"purchased"`
 	AnswerType  *string      `json:"answer_type"`
 	Status      string       `json:"status"`
 	DisplayPath string       `json:"display_path"`

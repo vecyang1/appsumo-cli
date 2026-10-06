@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1 - 2026-10-07
+
+### Added
+
+- Add `scripts/select_50_products.py` and `scripts/batch_test_50.py` for automated stratified sampling, stress testing, and diagnostic reconciliation.
+- Add `docs/RECONCILIATION_REPORT_50.md` certifying 100% pass rate across 50 diverse products (3,920 reviews, 9,492 questions, 422 FAQs, 171 founder updates, and 92.7 MB structured data).
+
+### Fixed
+
+- Add `FlexBool` and `FlexInt` types in `internal/appsumo/flex.go` to gracefully handle historical AppSumo schema anomalies where boolean fields (`pinned`, `resolved`, `approved`, `edited`, `followup`, `purchased`) contain ISO 8601 timestamp strings (e.g. `"2021-01-26T12:37:42..."` on older products like `fusebase`) or string numbers (`"1"`, `"0"`), preventing deserialization halts.
+- Update `internal/store/threads.go` with `flexIntToInt` conversion for safe SQLite storage of upvotes/downvotes.
+
 ## 0.4.0 - 2026-10-07
 
 ### Added
