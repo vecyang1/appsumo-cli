@@ -412,4 +412,138 @@ func TestStoreSearchDealsAndIdealDeals(t *testing.T) {
 	if len(priceIdeal) != 2 {
 		t.Fatalf("expected 2 deals under $80, got %d", len(priceIdeal))
 	}
+
+	// 5. IdealDeals with limit 0 (fetches all without cap)
+	allIdeal, err := db.IdealDeals(ctx, 4.5, 10, 0)
+	if err != nil {
+		t.Fatalf("IdealDeals with limit 0 error: %v", err)
+	}
+	if len(allIdeal) != 2 {
+		t.Fatalf("expected all 2 ideal deals with limit 0, got %d", len(allIdeal))
+	}
+}
+
+func TestStoreGetDeal(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	d1 := appsumo.Deal{
+		Slug:            "flipbooklets",
+		Name:            "FlipBooklets",
+		Price:           59.0,
+		OriginalPrice:   432.0,
+		CardDescription: "PDF to flipbook converter",
+		AverageRating:   floatPtr(4.8),
+		ReviewCount:     intPtr(149),
+	}
+	if _, err := db.SaveDealSnapshot(ctx, time.Now().UTC(), []appsumo.Deal{d1}); err != nil {
+		t.Fatalf("SaveDealSnapshot error: %v", err)
+	}
+
+	// Exact match
+	found, err := db.GetDeal(ctx, "flipbooklets")
+	if err != nil {
+		t.Fatalf("GetDeal('flipbooklets') error: %v", err)
+	}
+	if found == nil || found.Name != "FlipBooklets" {
+		t.Fatalf("expected FlipBooklets, got %v", found)
+	}
+
+	// Case-insensitive match
+	foundUpper, err := db.GetDeal(ctx, "FlipBooklets")
+	if err != nil {
+		t.Fatalf("GetDeal('FlipBooklets') error: %v", err)
+	}
+	if foundUpper == nil || foundUpper.Slug != "flipbooklets" {
+		t.Fatalf("expected flipbooklets, got %v", foundUpper)
+	}
+
+	// Non-existent
+	missing, err := db.GetDeal(ctx, "non-existent-deal")
+	if err != nil {
+		t.Fatalf("GetDeal('non-existent-deal') error: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("expected nil for missing deal, got %v", missing)
+	}
+}
+
+func TestStoreListDealsQuery(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	d1 := appsumo.Deal{
+		Slug:            "deal-alpha",
+		Name:            "Alpha Marketing Platform",
+		Price:           49.0,
+		Category:        "marketing",
+		CardDescription: "Automate social marketing and ads",
+		AverageRating:   floatPtr(4.8),
+		ReviewCount:     intPtr(25),
+	}
+	d2 := appsumo.Deal{
+		Slug:            "deal-beta",
+		Name:            "Beta Developer Tools",
+		Price:           99.0,
+		Category:        "developer-tools",
+		CardDescription: "Developer CLI and API toolkit",
+		AverageRating:   floatPtr(4.2),
+		ReviewCount:     intPtr(5),
+	}
+	if _, err := db.SaveDealSnapshot(ctx, time.Now().UTC(), []appsumo.Deal{d1, d2}); err != nil {
+		t.Fatalf("SaveDealSnapshot error: %v", err)
+	}
+
+	// 1. Fetch all with empty query
+	all, err := db.ListDealsQuery(ctx, appsumo.DealsQuery{})
+	if err != nil {
+		t.Fatalf("ListDealsQuery error: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 deals, got %d", len(all))
+	}
+
+	// 2. Query filter
+	filtered, err := db.ListDealsQuery(ctx, appsumo.DealsQuery{Query: "Developer"})
+	if err != nil {
+		t.Fatalf("ListDealsQuery with query error: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].Slug != "deal-beta" {
+		t.Fatalf("expected deal-beta, got %v", filtered)
+	}
+
+	// 3. Category filter
+	catFiltered, err := db.ListDealsQuery(ctx, appsumo.DealsQuery{Category: "marketing"})
+	if err != nil {
+		t.Fatalf("ListDealsQuery with category error: %v", err)
+	}
+	if len(catFiltered) != 1 || catFiltered[0].Slug != "deal-alpha" {
+		t.Fatalf("expected deal-alpha, got %v", catFiltered)
+	}
+
+	// 4. Rating & Reviews filter
+	ratedFiltered, err := db.ListDealsQuery(ctx, appsumo.DealsQuery{MinRating: 4.5, MinReviews: 10})
+	if err != nil {
+		t.Fatalf("ListDealsQuery with rating error: %v", err)
+	}
+	if len(ratedFiltered) != 1 || ratedFiltered[0].Slug != "deal-alpha" {
+		t.Fatalf("expected deal-alpha, got %v", ratedFiltered)
+	}
+
+	// 5. Limit
+	limited, err := db.ListDealsQuery(ctx, appsumo.DealsQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListDealsQuery with limit error: %v", err)
+	}
+	if len(limited) != 1 {
+		t.Fatalf("expected 1 deal with limit 1, got %d", len(limited))
+	}
 }

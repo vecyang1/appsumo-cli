@@ -15,24 +15,45 @@ import (
 // CleanProductSlug normalises a product slug or URL into a clean AppSumo slug.
 func CleanProductSlug(raw string) string {
 	raw = strings.TrimSpace(raw)
+	if idx := strings.Index(raw, "#"); idx != -1 {
+		raw = raw[:idx]
+	}
+	if idx := strings.Index(raw, "?"); idx != -1 {
+		raw = raw[:idx]
+	}
+	raw = strings.TrimSpace(raw)
+
 	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
 		u, err := url.Parse(raw)
 		if err == nil {
 			path := strings.Trim(u.Path, "/")
 			parts := strings.Split(path, "/")
 			for i, p := range parts {
-				if p == "products" && i+1 < len(parts) {
+				if p == "products" && i+1 < len(parts) && parts[i+1] != "" {
 					return parts[i+1]
 				}
 			}
-			if len(parts) > 0 {
+			if len(parts) > 0 && parts[len(parts)-1] != "" {
 				return parts[len(parts)-1]
 			}
 		}
 	}
+
+	if strings.Contains(raw, "products/") {
+		parts := strings.Split(raw, "/")
+		for i, p := range parts {
+			if p == "products" && i+1 < len(parts) && parts[i+1] != "" {
+				return parts[i+1]
+			}
+		}
+	}
+
 	raw = strings.Trim(raw, "/")
 	parts := strings.Split(raw, "/")
-	return parts[len(parts)-1]
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return raw
 }
 
 type PlanFeatureItem struct {

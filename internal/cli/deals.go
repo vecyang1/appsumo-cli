@@ -3,6 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 
 type dealsFetchInfo struct {
 	UniqueDeals   int    `json:"unique_deals"`
+	ScannedDeals  int    `json:"scanned_deals,omitempty"`
 	DeclaredTotal *int   `json:"declared_total"`
 	Complete      *bool  `json:"complete"`
 	Requests      int    `json:"requests"`
@@ -42,6 +46,7 @@ func (rt *runtime) dealsCmd() *cobra.Command {
 	deals.AddCommand(rt.dealsListCmd())
 	deals.AddCommand(rt.dealsSearchCmd())
 	deals.AddCommand(rt.dealsIdealCmd())
+	deals.AddCommand(rt.dealsExplainCmd())
 	deals.AddCommand(rt.dealsSyncNotionCmd())
 	deals.AddCommand(rt.dealsSyncCmd())
 	deals.AddCommand(rt.dealsDiffCmd())
@@ -54,6 +59,7 @@ func (rt *runtime) dealsListCmd() *cobra.Command {
 		pageSize   int
 		sort       string
 		query      string
+		local      bool
 		minRating  float64
 		minReviews int
 		maxPrice   float64
@@ -63,6 +69,43 @@ func (rt *runtime) dealsListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List every live deal in the public catalog",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if local {
+				db, err := rt.openStore(cmd.Context())
+				if err != nil {
+					return err
+				}
+				defer db.Close()
+				deals, err := db.ListDealsQuery(cmd.Context(), appsumo.DealsQuery{
+					PerPage:    pageSize,
+					Sort:       sort,
+					Limit:      limit,
+					Query:      query,
+					MinRating:  minRating,
+					MinReviews: minReviews,
+					MaxPrice:   maxPrice,
+					Category:   category,
+				})
+				if err != nil {
+					return err
+				}
+				n := len(deals)
+				isComplete := true
+				report := dealsReport{
+					Fetch: dealsFetchInfo{
+						UniqueDeals:   n,
+						ScannedDeals:  n,
+						DeclaredTotal: &n,
+						Complete:      &isComplete,
+						Requests:      1,
+						Sort:          "local-db-list",
+						PageSize:      n,
+					},
+					Warnings: []string{},
+					Deals:    deals,
+				}
+				return rt.emitDeals(cmd, report)
+			}
+
 			result, err := rt.publicClient().FetchAllDealsQuery(cmd.Context(), appsumo.DealsQuery{
 				PerPage:    pageSize,
 				Sort:       sort,
@@ -79,6 +122,7 @@ func (rt *runtime) dealsListCmd() *cobra.Command {
 			report := dealsReport{
 				Fetch: dealsFetchInfo{
 					UniqueDeals:   len(result.Deals),
+					ScannedDeals:  result.ScannedDeals,
 					DeclaredTotal: result.DeclaredTotal,
 					Complete:      result.Complete(),
 					Requests:      result.Requests,
@@ -95,6 +139,7 @@ func (rt *runtime) dealsListCmd() *cobra.Command {
 			return rt.emitDeals(cmd, report)
 		},
 	}
+	cmd.Flags().BoolVar(&local, "local", false, "Query from local SQLite database instead of live API")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Stop after N deals (0 fetches all)")
 	cmd.Flags().IntVar(&pageSize, "page-size", appsumo.DefaultDealsPageSize, "Deals per request")
 	cmd.Flags().StringVar(&sort, "sort", appsumo.DefaultDealsSort, "Server-side sort; its presence is what makes the walk complete")
@@ -227,8 +272,8 @@ func (rt *runtime) dealsIdealCmd() *cobra.Command {
 			if minReviews <= 0 {
 				minReviews = 10
 			}
-			if limit <= 0 {
-				limit = 10
+			if limit < 0 {
+				limit = 0
 			}
 			if sort == "" {
 				sort = appsumo.DealsSortRating
@@ -290,6 +335,7 @@ func (rt *runtime) dealsIdealCmd() *cobra.Command {
 			report := dealsReport{
 				Fetch: dealsFetchInfo{
 					UniqueDeals:   len(result.Deals),
+					ScannedDeals:  result.ScannedDeals,
 					DeclaredTotal: result.DeclaredTotal,
 					Complete:      result.Complete(),
 					Requests:      result.Requests,
@@ -318,7 +364,7 @@ func (rt *runtime) dealsIdealCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&local, "local", false, "Query from local SQLite database instead of live API")
 	cmd.Flags().Float64Var(&minRating, "min-rating", 4.5, "Minimum average rating (e.g. 4.5)")
 	cmd.Flags().IntVar(&minReviews, "min-reviews", 10, "Minimum review count (e.g. 10)")
-	cmd.Flags().IntVar(&limit, "limit", 10, "Number of ideal deals to return (default 10)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Number of ideal deals to return (0 fetches all)")
 	cmd.Flags().IntVar(&pageSize, "page-size", appsumo.DefaultDealsPageSize, "Deals per request")
 	cmd.Flags().StringVar(&sort, "sort", appsumo.DealsSortRating, "Server-side sort order (default 'rating')")
 	cmd.Flags().StringVar(&query, "query", "", "Filter ideal deals by keyword")
@@ -326,6 +372,58 @@ func (rt *runtime) dealsIdealCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&maxPrice, "max-price", 0, "Maximum price")
 	cmd.Flags().BoolVarP(&chinese, "chinese", "c", false, "Output deal recommendations in Chinese")
 	cmd.Flags().StringVar(&format, "format", "table", "Output format: table, card, markdown")
+	return cmd
+}
+
+func (rt *runtime) dealsExplainCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "explain <product-slug-or-url>",
+		Short: "Diagnose and explain buy advisor audit verdict for a specific deal",
+		Long: "Diagnostic-First inspector that evaluates a deal against the 2nd Brain owned asset portfolio\n" +
+			"and decision rules, showing which rule hit, why filtered, and the exact verdict.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			slug := appsumo.CleanProductSlug(args[0])
+			if slug == "" {
+				return fmt.Errorf("invalid product slug or url: %s", args[0])
+			}
+
+			scriptCandidates := []string{
+				filepath.Join("scripts", "appsumo_buy_advisor.py"),
+				filepath.Join("..", "scripts", "appsumo_buy_advisor.py"),
+			}
+			if exe, err := os.Executable(); err == nil {
+				scriptCandidates = append([]string{filepath.Join(filepath.Dir(exe), "scripts", "appsumo_buy_advisor.py")}, scriptCandidates...)
+			}
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				scriptCandidates = append(scriptCandidates, filepath.Join(home, "Documents", "A-coding", "26.05.23-appsumo-cli", "scripts", "appsumo_buy_advisor.py"))
+			}
+
+			var scriptPath string
+			for _, c := range scriptCandidates {
+				if _, err := os.Stat(c); err == nil {
+					scriptPath = c
+					break
+				}
+			}
+			if scriptPath == "" {
+				return fmt.Errorf("appsumo_buy_advisor.py not found in candidate paths")
+			}
+
+			pyArgs := []string{scriptPath, "explain", slug}
+			if rt.asJSON || asJSON {
+				pyArgs = append(pyArgs, "--json")
+			}
+
+			pyCmd := exec.CommandContext(cmd.Context(), "python3", pyArgs...)
+			pyCmd.Stdout = cmd.OutOrStdout()
+			pyCmd.Stderr = cmd.OutOrStderr()
+			return pyCmd.Run()
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Output diagnosis in JSON format")
 	return cmd
 }
 

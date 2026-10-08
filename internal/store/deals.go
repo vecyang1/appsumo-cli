@@ -352,9 +352,6 @@ func (db *DB) IdealDealsQuery(ctx context.Context, q appsumo.DealsQuery) ([]apps
 		minReviews = 10
 	}
 	limit := q.Limit
-	if limit <= 0 {
-		limit = 20
-	}
 
 	query := strings.TrimSpace(q.Query)
 	pattern := "%" + strings.ToLower(query) + "%"
@@ -384,8 +381,12 @@ func (db *DB) IdealDealsQuery(ctx context.Context, q appsumo.DealsQuery) ([]apps
 		args = append(args, q.MaxPrice)
 	}
 
-	sqlQuery += ` order by average_rating desc, review_count desc, price asc limit ?`
-	args = append(args, limit)
+	if limit > 0 {
+		sqlQuery += ` order by average_rating desc, review_count desc, price asc limit ?`
+		args = append(args, limit)
+	} else {
+		sqlQuery += ` order by average_rating desc, review_count desc, price asc`
+	}
 
 	rows, err := db.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
@@ -393,6 +394,97 @@ func (db *DB) IdealDealsQuery(ctx context.Context, q appsumo.DealsQuery) ([]apps
 	}
 	defer rows.Close()
 	return scanDealsRows(rows)
+}
+
+// ListDealsQuery queries deals from local SQLite store with optional filters and sorting.
+func (db *DB) ListDealsQuery(ctx context.Context, q appsumo.DealsQuery) ([]appsumo.Deal, error) {
+	limit := q.Limit
+	query := strings.TrimSpace(q.Query)
+	pattern := "%" + strings.ToLower(query) + "%"
+
+	sqlQuery := `select
+		slug, id, name, url, price, original_price, plus_price, is_free, listing_type,
+		card_description, value_prop, best_for, alternative_to, integrations, subcategory,
+		codes_remaining, percent_claimed, start_date, end_date, timer_reason,
+		review_count, average_rating, category, deal_group, raw_json
+		from deals
+		where 1=1`
+	var args []any
+
+	if query != "" {
+		sqlQuery += ` and (lower(name) like ? or lower(slug) like ? or lower(ifnull(card_description, '')) like ?
+		               or lower(ifnull(value_prop, '')) like ? or lower(ifnull(best_for, '')) like ?
+		               or lower(ifnull(alternative_to, '')) like ? or lower(ifnull(category, '')) like ?)`
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern, pattern)
+	}
+	if q.Category != "" {
+		sqlQuery += ` and (lower(category) = lower(?) or lower(category) like ?)`
+		catPattern := "%" + strings.ToLower(strings.TrimSpace(q.Category)) + "%"
+		args = append(args, q.Category, catPattern)
+	}
+	if q.MinRating > 0 {
+		sqlQuery += ` and average_rating >= ?`
+		args = append(args, q.MinRating)
+	}
+	if q.MinReviews > 0 {
+		sqlQuery += ` and review_count >= ?`
+		args = append(args, q.MinReviews)
+	}
+	if q.MaxPrice > 0 {
+		sqlQuery += ` and price <= ?`
+		args = append(args, q.MaxPrice)
+	}
+
+	sort := strings.ToLower(strings.TrimSpace(q.Sort))
+	switch sort {
+	case "rating":
+		sqlQuery += ` order by average_rating desc, review_count desc, price asc`
+	case "price-asc":
+		sqlQuery += ` order by price asc`
+	case "price-desc":
+		sqlQuery += ` order by price desc`
+	case "reviews":
+		sqlQuery += ` order by review_count desc`
+	default:
+		sqlQuery += ` order by rowid asc`
+	}
+
+	if limit > 0 {
+		sqlQuery += ` limit ?`
+		args = append(args, limit)
+	}
+
+	rows, err := db.db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDealsRows(rows)
+}
+
+// GetDeal loads a single deal by its exact slug or case-insensitive slug.
+func (db *DB) GetDeal(ctx context.Context, slug string) (*appsumo.Deal, error) {
+	slug = strings.TrimSpace(slug)
+	rows, err := db.db.QueryContext(ctx, `select
+		slug, id, name, url, price, original_price, plus_price, is_free, listing_type,
+		card_description, value_prop, best_for, alternative_to, integrations, subcategory,
+		codes_remaining, percent_claimed, start_date, end_date, timer_reason,
+		review_count, average_rating, category, deal_group, raw_json
+		from deals
+		where slug = ? or lower(slug) = lower(?)
+		limit 1`, slug, slug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	deals, err := scanDealsRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(deals) == 0 {
+		return nil, nil
+	}
+	return &deals[0], nil
 }
 
 func scanDealsRows(rows *sql.Rows) ([]appsumo.Deal, error) {
