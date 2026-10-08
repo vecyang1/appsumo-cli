@@ -202,6 +202,7 @@ type DealsQuery struct {
 // label a complete walk with the setting that loses 16% of the catalog.
 type DealsResult struct {
 	Deals         []Deal
+	ScannedDeals  int
 	DeclaredTotal *int
 	Requests      int
 	Truncated     bool
@@ -211,14 +212,19 @@ type DealsResult struct {
 	Query         string
 }
 
-// Complete reports whether the walk collected exactly as many deals as the
-// catalog declared. It is nil when the catalog declared no total, because an
-// unverifiable crawl is unknown — neither complete nor incomplete.
+// Complete reports whether the walk collected or scanned as many deals as the
+// catalog declared. When client-side filters (rating, reviews, price, category)
+// are active, it evaluates completeness against the scanned unique deals rather
+// than the filtered subset. It is nil when the catalog declared no total.
 func (r *DealsResult) Complete() *bool {
 	if r.DeclaredTotal == nil {
 		return nil
 	}
-	complete := !r.Truncated && len(r.Deals) == *r.DeclaredTotal
+	scanned := r.ScannedDeals
+	if scanned <= 0 {
+		scanned = len(r.Deals)
+	}
+	complete := !r.Truncated && scanned == *r.DeclaredTotal
 	return &complete
 }
 
@@ -442,6 +448,7 @@ func (c *Client) FetchAllDealsQuery(ctx context.Context, q DealsQuery) (*DealsRe
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"stopped after the %d request safety cap", maxDealsRequests))
 	}
+	result.ScannedDeals = len(seen)
 	if duplicates > 0 {
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"catalog served %d duplicate rows across pages; deduplicated by slug", duplicates))

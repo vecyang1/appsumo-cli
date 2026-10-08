@@ -31,4 +31,7 @@ progress.md
 task_plan.md
 handoff.md
 graphify-out/
+.run/
+__pycache__/
+*.pyc
 

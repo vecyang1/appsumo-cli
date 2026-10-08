@@ -20,6 +20,10 @@ func TestCleanProductSlug(t *testing.T) {
 		{"https://appsumo.com/products/poppy-ai", "poppy-ai"},
 		{"https://appsumo.com/products/poppy-ai/reviews/", "poppy-ai"},
 		{"http://appsumo.com/products/test-tool/?ref=123", "test-tool"},
+		{"appsumo.com/products/flipbooklets/?query=test#pricing", "flipbooklets"},
+		{"products/flipbooklets?utm_source=email", "flipbooklets"},
+		{"flipbooklets/?foo=bar#section", "flipbooklets"},
+		{"flipbooklets#overview", "flipbooklets"},
 	}
 
 	for _, tc := range tests {
