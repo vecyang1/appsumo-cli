@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.5.5 - 2026-10-08
+## 0.5.6 - 2026-10-12
+
+### Added
+
+- **Full Deal Attributes & Alternative-To Enrichment (`enrich_deals_with_raw_metadata`)**: Unpacks and merges rich `raw_json` metadata from SQLite across all candidate deals, restoring `alternative_to` competitor markers (available on 295/439 deals), `card_description`, and taxonomy that were previously dropped by lightweight list projections.
+- **Expanded Competitor & Saturated Category Coverage**:
+  - Mapped CRM competitors (`HubSpot`, `Pipedrive`, `Salesforce`, `Zoho`) to `FluentCRM + Clodura.AI`.
+  - Mapped Influencer/UGC platforms (`Modash`, `Upfluence`, `Grin`) to Knowledge Base owned asset `EezyCollab` (activated lifetime deal).
+  - Mapped long-form writing tools (`Novelcrafter`, `Scrivener`) to local `NewType / Luogen + Claude / Gemini` agent suites.
+  - Mapped e-commerce store builders (`Shopify`, `BigCommerce`, `Squarespace`) to `Zylvie + WooCommerce / ShopEngine Plus`.
+  - Saturated `crm`, `email-sms-marketing`, `chatbots-ai-agents`, `seo-analytics`, `content-marketing`, `customer-support`, and `ecommerce` categories.
+- **Domain Capability Deduplication (Rule 4 Hardening)**: Intercepts code vulnerability scanners (`Rafter`) in favor of native `security-scan` + `github-ops` + GitHub CodeQL; local dependency graph tools (`Vexp`) in favor of native `Graphify` + `GitNexus`; multilingual website translation (`MultiLipi`) in favor of WordPress native + DeepL/GPT pipelines; and insider trading trackers (`ProBors`) as out-of-scope speculation tools.
+- **Unit Test Coverage Expansion**: Added 4 test suites covering CRM, influencer discovery, security scanning, dependency graphs, and multilingual translation in `scripts/test_appsumo_buy_advisor.py`, bringing suite to 37/37 tests passing.
+
+### Fixed
+
+- **Robust Notion Block Cleanup**: Refactored `cleanup_previous_notion_runs` to use native `urllib.request` instead of external `curl`, reliably inheriting proxy environment variables and ensuring 100% cleanup of outdated blocks before appending the authoritative run verdict.
+- **CI/CD Go Version Resilience & Vulnerability Gate**: Upgraded `actions/setup-go@v6` in `.github/workflows/ci.yml` to use `stable` with `check-latest: true`, preventing `govulncheck` exit code 3 failures caused by historical Go 1.26.6 stdlib CVEs and ensuring green CI pipelines.
 
 ### Added
 
