@@ -180,6 +180,30 @@ COMPETITOR_TO_OWNED_ASSET = {
     "wisprflow": "Letterly + 本地语音转录与 AI 流水线",
     "lovable": "Antigravity + Claude DevFleet (原生 AI 智能体工程集群)",
     "replit": "Antigravity + 本地 A-coding 研发工作区",
+    # CRM & Sales Pipeline
+    "hubspot": "FluentCRM + Clodura.AI (已拥有企业级邮件 CRM 与 B2B 客户管理底座)",
+    "pipedrive": "FluentCRM + Clodura.AI",
+    "salesforce": "FluentCRM + Clodura.AI",
+    "zoho": "FluentCRM + Clodura.AI",
+    # Influencer Marketing & Creator Discovery
+    "modash": "EezyCollab (已拥有 2nd Brain 激活终身资产: 红人发现与品牌合作平台)",
+    "upfluence": "EezyCollab (已拥有红人发现与合作平台终身资产)",
+    "grin": "EezyCollab",
+    # Novel & Long-form AI Writing
+    "novelcrafter": "本地 NewType / Luogen + Claude / Gemini 智能体写作套件",
+    "scrivener": "本地 NewType / Luogen + Claude / Gemini 智能体写作套件",
+    # E-commerce Platform & Checkout
+    "shopify": "Zylvie (已购终身独立结算系统) + WooCommerce/ShopEngine Plus",
+    "bigcommerce": "Zylvie + WooCommerce/ShopEngine Plus",
+    "squarespace": "Zylvie + WooCommerce/ShopEngine Plus",
+    # Security & Error Monitoring
+    "sentry": "本地 security-scan + github-ops 技能及 GitHub 原生安全工作流",
+    "gitlab": "本地 security-scan + github-ops 技能及 GitHub 原生安全工作流",
+    # Lead Contact Discovery & Verification
+    "apollo": "Clodura.AI + Email Checkpoint (已拥有 B2B 拓客与邮箱有效性清洗终身资产)",
+    "apollo.io": "Clodura.AI + Email Checkpoint",
+    "lusha": "Clodura.AI + Email Checkpoint",
+    "cognism": "Clodura.AI + Email Checkpoint",
 }
 
 # Subcategories saturated by existing assets
@@ -215,6 +239,18 @@ SATURATED_SUBCATEGORIES = {
     "Content Strategy": "本地 NewType / Luogen 智能体写作与调研套件",
     "No-Code Automation": "Albato + n8n + ZeroWork (已拥有 134+ 自动化流与 RPA 编排)",
     "E-Signatures & Legal": "Nutrient DWS (nutrient-document-processing 技能) + 本地合规签名",
+    "crm": "FluentCRM + Clodura.AI (已拥有深度自托管 CRM 与 B2B 获客中枢)",
+    "CRM": "FluentCRM + Clodura.AI",
+    "email-sms-marketing": "SendFox + Encharge (已拥有邮件营销与自动化旅程全套资产)",
+    "Email Marketing": "SendFox + Encharge",
+    "chatbots-ai-agents": "CX Genie + Zernio (已拥有 AI 客服聊天机器人与多渠道通信底座)",
+    "Chatbots": "CX Genie + Zernio",
+    "seo-analytics": "Squirrly SEO + Cromojo (已拥有 AI SEO 终身版与自动收录) + 本地 ai-seo 技能",
+    "content-marketing": "本地 NewType / Luogen + Claude / Gemini 智能体创作中枢",
+    "AI Writing & Copywriting": "本地 NewType / Luogen + Claude / Gemini 智能体创作中枢",
+    "customer-support": "CX Genie + Taku (已拥有客服机器人与全渠道触达中心)",
+    "ecommerce": "Zylvie + WooCommerce / ShopEngine Plus (已拥有独立结账与全套商城构建器)",
+    "Influencer & UGC": "EezyCollab (已拥有 2nd Brain 激活终身资产: 红人发现与合作管理)",
 }
 
 # Low-value or non-software junk indicators
@@ -593,6 +629,79 @@ class DealAuditor:
             rep = "FlipBooklets (已拥有终身资产与 Cloudflare Edge Worker 白标网关)"
             steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "3D 交互式电子书/翻页书: " + rep})
             return _verdict(False, "Rule 4 (垂直领域与能力去重)", "3D 交互式电子书/翻页书: 已拥有「FlipBooklets」终身资产与 Cloudflare Edge Worker 白标网关，无需重复购置", replacement=rep)
+
+        # Code security scanning, vulnerabilities & secret detection
+        if ("security scanning" in text_to_check or "vulnerability" in text_to_check or "vulnerabilities" in text_to_check or "secrets" in text_to_check) and (
+            "github repo" in text_to_check or "github" in text_to_check or "code" in text_to_check or "scan" in text_to_check
+        ):
+            rep = "本地 security-scan + github-ops + security-bounty-hunter 技能及 GitHub 原生 Dependabot/CodeQL"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "代码/仓库安全漏洞扫描: " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "代码/仓库安全漏洞与凭证扫描: 本地已拥有「security-scan」+「github-ops」+「security-bounty-hunter」及 GitHub 原生 Dependabot / Secret Scanning / CodeQL，无需付费购买商业 SaaS", replacement=rep)
+
+        # Local dependency graph and context for AI coding agents
+        if ("dependency graph" in text_to_check or "context to ai coding" in text_to_check or "precise context to ai" in text_to_check) and (
+            "agent" in text_to_check or "code" in text_to_check or "vscode" in text_to_check or "cli" in text_to_check
+        ):
+            rep = "本地 Graphify-First / GitNexus 智能体代码图谱基础设施"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "代码依赖图谱与 Agent 上下文: " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "代码依赖图谱与 Agent 上下文: 本地工作区已原生部署并严格执行「Graphify」+「GitNexus」图谱基础设施，无需额外购置闭源 SaaS", replacement=rep)
+
+        # Multilingual website translation & localization SEO
+        if ("translate your website" in text_to_check or "multilingual website" in text_to_check or "120+ languages" in text_to_check or "rank in 120" in text_to_check) or (
+            "translate" in text_to_check and ("website" in text_to_check or "languages on google" in text_to_check or "multilipi" in text_to_check)
+        ):
+            rep = "WordPress 原生多语言架构 + 本地 DeepL/GPT 翻译自动化流水线"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "多语言建站与翻译 SEO: " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "多语言建站与翻译 SEO: 现有 WordPress 原生多语言架构与本地 DeepL/GPT 翻译自动化流水线已完全满足需求，无需重复购置", replacement=rep)
+
+        # Stock / Insider / Politician trading trackers
+        if ("insider" in text_to_check or "politician" in text_to_check or "whale trade" in text_to_check) and (
+            "trades" in text_to_check or "filings" in text_to_check or "signal scoring" in text_to_check
+        ):
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "金融内幕与政客交易追踪 (非核心业务主线)"})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "金融内幕与政客交易追踪: 属于股票与金融投机垂直领域，脱离当前 AI 智能体工程与电商核心主线，避免分散注意力与资金消耗")
+
+        # Website floating contact button & widget
+        if ("contact button" in text_to_check or "floating contact" in text_to_check or "all-in-one website widget" in text_to_check) or (
+            "website widget" in text_to_check and ("leads" in text_to_check or "engagement" in text_to_check or "contact" in text_to_check)
+        ):
+            rep = "Taku (taku.cool, 已拥有 3 个生产 Space 及 REST API 自动化) + 独立站原生前端组件"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "网站全合一联系小部件/悬浮窗: " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "网站全合一联系小部件/悬浮窗: 已拥有「Taku」(taku.cool) 统一触达中心及独立站原生组件，无需重复购置", replacement=rep)
+
+        # B2B Email/Phone Waterfall Discovery & Verification
+        if ("verified email and direct phone" in text_to_check or "data waterfall" in text_to_check or "find anyone's verified email" in text_to_check) or (
+            "cleanlist" in text_to_check or ("find" in text_to_check and "verify contacts" in text_to_check)
+        ):
+            rep = "Clodura.AI (已购终身 B2B 获客底座) + Email Checkpoint (已购终身邮箱清洗资产)"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "联系人查找与邮箱清洗 Waterfall: " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "联系人查找与邮箱清洗 Waterfall: 已拥有「Clodura.AI」B2B 获客中枢及「Email Checkpoint」退信校验终身资产，无需重复购置", replacement=rep)
+
+        # AI Search Engine Optimization (GEO / AIO)
+        if ("optimize your content for ai search" in text_to_check or "ai search engines like" in text_to_check or "perplexity, and google gemini" in text_to_check) or (
+            "clickrank" in text_to_check or ("ai search" in text_to_check and "seo" in text_to_check)
+        ):
+            rep = "本地 ai-seo + seo-geo 研发技能及 Squirrly SEO + Cromojo 终身资产"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "AI 搜索优化 (GEO/AIO): " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "AI 搜索优化 (GEO/AIO): 本地已拥有「ai-seo」+「seo-geo」专业技能及「Squirrly SEO」+「Cromojo」终身资产，无需采购商业 SaaS", replacement=rep)
+
+        # All-in-one business software & client portal
+        if "all-in-one business software" in text_to_check or "suitedash" in text_to_check:
+            rep = "FluentCRM + Baserow/Notion 统一中枢 + Skillplate 交付平台"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "一体化企业运营与客户门户: " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "一体化企业运营与客户门户: 已拥有「FluentCRM」+「Baserow/Notion」+「Skillplate」全套交付与客户中枢，无需重复购置", replacement=rep)
+
+        # Visual AI Workspace & Video to Script
+        if "visual ai workspace for creators" in text_to_check or "drag in youtube videos" in text_to_check or "poppy ai" in text_to_check:
+            rep = "本地 NewType + Letterly + NotebookLM + transcribe-media 智能体流水线"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "创作者视觉 AI 工作区: " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "创作者视觉 AI 工作区: 本地已拥有「NewType」+「Letterly」+「NotebookLM」+「transcribe-media」全套智能体流水线，无需高昂溢价采购", replacement=rep)
+
+        # No-code ecommerce OS
+        if "no-code ecommerce os" in text_to_check or "scale your online store with 1,500+ native features" in text_to_check:
+            rep = "Zylvie (已购独立高转化结算系统) + WooCommerce/ShopEngine Plus 全套商城构建器"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "无代码电商独立建站 OS: " + rep})
+            return _verdict(False, "Rule 4 (垂直领域与能力去重)", "无代码电商独立建站 OS: 已拥有「Zylvie」高转化结算系统及「WooCommerce」全套构建器，无需额外订阅独立电商系统", replacement=rep)
 
         steps.append({
             "step": 4,
@@ -988,6 +1097,59 @@ def explain_deal(
     return audit_result
 
 
+def enrich_deals_with_raw_metadata(deals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Enriches candidate deals with full attributes, alternative_to, and taxonomy from SQLite raw_json."""
+    if not deals:
+        return deals
+    db_candidates = [
+        Path.home() / "Library/Application Support/appsumo-cli/appsumo.db",
+        Path.home() / ".config/appsumo-cli/appsumo.db",
+    ]
+    if os.getenv("APPSUMO_DB"):
+        db_candidates.insert(0, Path(os.getenv("APPSUMO_DB")))
+
+    conn = None
+    for db_path in db_candidates:
+        if db_path.exists():
+            try:
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                break
+            except Exception:
+                pass
+    if not conn:
+        return deals
+
+    try:
+        cursor = conn.cursor()
+        enriched = []
+        for d in deals:
+            slug = d.get("slug") or ""
+            cursor.execute("SELECT raw_json FROM deals WHERE slug=? LIMIT 1", (slug,))
+            row = cursor.fetchone()
+            if row and row["raw_json"]:
+                try:
+                    raw_data = json.loads(row["raw_json"])
+                    norm = _normalize_scraped_deal(raw_data, slug)
+                    for k, v in norm.items():
+                        if v and not d.get(k):
+                            d[k] = v
+                        elif k in ("alternative_to", "subcategory", "category", "card_description", "best_for", "integrations") and v:
+                            d[k] = v
+                except Exception:
+                    pass
+            enriched.append(d)
+        return enriched
+    except Exception:
+        return deals
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def fetch_candidate_deals(
     bin_path: str,
     limit: int = 0,
@@ -1041,6 +1203,7 @@ def fetch_candidate_deals(
                 fetch_info = data.get("fetch", {})
                 fetch_info["warnings"] = data.get("warnings", [])
                 fetch_info["source"] = "local_sqlite"
+                deals = enrich_deals_with_raw_metadata(deals)
                 return deals, fetch_info
         except Exception:
             pass
@@ -1076,6 +1239,7 @@ def fetch_candidate_deals(
         fetch_info = data.get("fetch", {})
         fetch_info["warnings"] = data.get("warnings", [])
         fetch_info["source"] = "live_api"
+        deals = enrich_deals_with_raw_metadata(deals)
         return deals, fetch_info
     except Exception as e:
         print(f"Error fetching deals via CLI ({cmd}): {e}", file=sys.stderr)
@@ -1084,26 +1248,27 @@ def fetch_candidate_deals(
 
 def cleanup_previous_notion_runs(page_id: str, token: str) -> None:
     """Removes prior automated cadence runs from the Notion page to maintain single authoritative verdict."""
-    cmd = [
-        "curl", "-s",
-        "-H", f"Authorization: Bearer {token}",
-        "-H", "Notion-Version: 2022-06-28",
-        f"https://api.notion.com/v1/blocks/{page_id}/children",
-    ]
+    import urllib.request
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+    }
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(proc.stdout)
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
         results = data.get("results", [])
         # Keep the first block (original prompt / task description)
         for block in results[1:]:
             bid = block.get("id")
-            del_cmd = [
-                "curl", "-s", "-X", "DELETE",
-                "-H", f"Authorization: Bearer {token}",
-                "-H", "Notion-Version: 2022-06-28",
-                f"https://api.notion.com/v1/blocks/{bid}",
-            ]
-            subprocess.run(del_cmd, capture_output=True, text=True)
+            del_url = f"https://api.notion.com/v1/blocks/{bid}"
+            del_req = urllib.request.Request(del_url, headers=headers, method="DELETE")
+            try:
+                with urllib.request.urlopen(del_req) as _:
+                    pass
+            except Exception:
+                pass
     except Exception as e:
         print(f"Notice: cleanup previous Notion blocks skipped: {e}", file=sys.stderr)
 
