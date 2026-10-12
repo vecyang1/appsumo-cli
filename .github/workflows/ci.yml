@@ -17,7 +17,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: 'stable'
+          check-latest: true
           cache: true
       - run: go mod verify
       - run: go test ./...

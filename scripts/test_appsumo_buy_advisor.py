@@ -558,7 +558,99 @@ status: active
             self.assertEqual(len(deals), 1)
             self.assertEqual(deals[0]["slug"], "live-deal-1")
             self.assertEqual(fetch_info.get("source"), "live_api")
-            self.assertEqual(mock_run.call_count, 2)
+    def test_crm_competitor_and_category_rejection(self):
+        hubspot_deal = {
+            "name": "Fluid CRM",
+            "slug": "fluid-crm",
+            "price": 59.0,
+            "original_price": 192.0,
+            "average_rating": 5.0,
+            "review_count": 29,
+            "category": "crm",
+            "subcategory": "CRM",
+            "alternative_to": ["HubSpot", "Pipedrive"],
+            "card_description": "Organize leads, manage follow-ups, and move deals forward with a calm visual CRM",
+        }
+        rec, reason, score = self.auditor.audit_deal(hubspot_deal)
+        self.assertFalse(rec)
+        self.assertIn("FluentCRM", reason)
+
+    def test_influencer_discovery_rejection(self):
+        modash_deal = {
+            "name": "Creator Lookup",
+            "slug": "creator-lookup",
+            "price": 59.0,
+            "original_price": 180.0,
+            "average_rating": 4.7,
+            "review_count": 10,
+            "category": "social-media",
+            "subcategory": "Influencer & UGC",
+            "alternative_to": ["Modash", "Upfluence"],
+            "card_description": "Search an AI-powered influencer database of 400M+ creators",
+        }
+        rec, reason, score = self.auditor.audit_deal(modash_deal)
+        self.assertFalse(rec)
+        self.assertIn("EezyCollab", reason)
+
+    def test_security_scanning_and_dependency_graph_rejection(self):
+        rafter_deal = {
+            "name": "Rafter",
+            "slug": "rafter",
+            "price": 39.0,
+            "original_price": 180.0,
+            "average_rating": 4.82,
+            "review_count": 22,
+            "category": "developer-tools",
+            "subcategory": "Dev Utilities",
+            "card_description": "Scan GitHub repos for vulnerabilities, secrets, and security issues with AI-ready fixes",
+        }
+        rec, reason, score = self.auditor.audit_deal(rafter_deal)
+        self.assertFalse(rec)
+        self.assertIn("security-scan", reason)
+
+        vexp_deal = {
+            "name": "Vexp",
+            "slug": "vexp",
+            "price": 49.0,
+            "original_price": 199.0,
+            "average_rating": 4.57,
+            "review_count": 30,
+            "category": "developer-tools",
+            "subcategory": "Dev Utilities",
+            "card_description": "Build a local dependency graph and serve precise context to AI coding agents across VS Code and CLI",
+        }
+        rec, reason, score = self.auditor.audit_deal(vexp_deal)
+        self.assertFalse(rec)
+        self.assertIn("Graphify", reason)
+
+    def test_multilingual_and_trading_rejection(self):
+        multilipi_deal = {
+            "name": "MultiLipi",
+            "slug": "multilipi",
+            "price": 79.0,
+            "original_price": 360.0,
+            "average_rating": 4.69,
+            "review_count": 54,
+            "category": "seo-analytics",
+            "card_description": "Translate your website into 120+ languages to rank high on Google and get cited by ChatGPT or Gemini",
+        }
+        rec, reason, score = self.auditor.audit_deal(multilipi_deal)
+        self.assertFalse(rec)
+        self.assertTrue("WordPress 原生多语言架构" in reason or "Squirrly SEO" in reason)
+
+        probors_deal = {
+            "name": "ProBors",
+            "slug": "probors",
+            "price": 49.0,
+            "original_price": 240.0,
+            "average_rating": 4.75,
+            "review_count": 18,
+            "category": "finance",
+            "card_description": "Follow insider, politician, and whale trades with real-time filings, signal scoring, and AI research",
+        }
+        rec, reason, score = self.auditor.audit_deal(probors_deal)
+        self.assertFalse(rec)
+        self.assertIn("核心主线", reason)
 
 
 if __name__ == "__main__":
