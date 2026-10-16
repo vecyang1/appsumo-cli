@@ -2,7 +2,7 @@
 """
 AppSumo Weekly Buy Advisor & Asset-Aware Deal Recommender
 =========================================================
-Scans live/synced AppSumo deals against Knowledge Base purchased assets and Memory Center.
+Scans live/synced AppSumo deals against purchased assets and Memory Center.
 Filters out duplicate wheels and commodities.
 If no novel high-value deals are needed, strictly recommends NOTHING (zero duplicate noise).
 If a genuine capability gap is discovered, formats a structured Chinese recommendation and syncs to Notion.
@@ -22,13 +22,18 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+def _resolve_tools_file(filename: str) -> Path:
+    env_val = os.environ.get("APPSUMO_ASSETS_PATH")
+    if env_val and filename == "appsumo_purchased_assets.md":
+        return Path(env_val).expanduser()
+    for match in Path.home().glob(f"Documents/*/*/*Brain*/05 - Memory Center/tools/{filename}"):
+        if match.exists():
+            return match
+    return Path(__file__).resolve().parent.parent / "data" / filename
+
 # Default paths
-DEFAULT_ASSETS_MD = Path(
-    "Documents/Projects Cowork/26.06.06 Knowledge Base/05 - Memory Center/tools/appsumo_purchased_assets.md"
-)
-DEFAULT_PURCHASES_MD = Path(
-    "Documents/Projects Cowork/26.06.06 Knowledge Base/05 - Memory Center/tools/appsumo_purchases.md"
-)
+DEFAULT_ASSETS_MD = _resolve_tools_file("appsumo_purchased_assets.md")
+DEFAULT_PURCHASES_MD = _resolve_tools_file("appsumo_purchases.md")
 DEFAULT_NOTION_PAGE_ID = "3f2e1b43-2393-815a-97e2-e06c9efcbfdc"
 CADENCE_ID = "CAD-20261007-appsumo-weekly-buy-advisor"
 
@@ -186,7 +191,7 @@ COMPETITOR_TO_OWNED_ASSET = {
     "salesforce": "FluentCRM + Clodura.AI",
     "zoho": "FluentCRM + Clodura.AI",
     # Influencer Marketing & Creator Discovery
-    "modash": "EezyCollab (已拥有 Knowledge Base 激活终身资产: 红人发现与品牌合作平台)",
+    "modash": "EezyCollab (已拥有激活终身资产: 红人发现与品牌合作平台)",
     "upfluence": "EezyCollab (已拥有红人发现与合作平台终身资产)",
     "grin": "EezyCollab",
     # Novel & Long-form AI Writing
@@ -250,7 +255,7 @@ SATURATED_SUBCATEGORIES = {
     "AI Writing & Copywriting": "本地 NewType / Luogen + Claude / Gemini 智能体创作中枢",
     "customer-support": "CX Genie + Taku (已拥有客服机器人与全渠道触达中心)",
     "ecommerce": "Zylvie + WooCommerce / ShopEngine Plus (已拥有独立结账与全套商城构建器)",
-    "Influencer & UGC": "EezyCollab (已拥有 Knowledge Base 激活终身资产: 红人发现与合作管理)",
+    "Influencer & UGC": "EezyCollab (已拥有激活终身资产: 红人发现与合作管理)",
 }
 
 # Low-value or non-software junk indicators
@@ -278,7 +283,7 @@ NON_SOFTWARE_PATTERNS = [
 
 
 class AssetKnowledgeBase:
-    """Loads and indexes owned software assets from Knowledge Base memory."""
+    """Loads and indexes owned software assets from knowledge base."""
 
     def __init__(self, assets_file: Path = DEFAULT_ASSETS_MD):
         self.assets_file = Path(assets_file)
@@ -459,7 +464,7 @@ class DealAuditor:
             "step": 1,
             "rule_name": "Owned Asset Match",
             "status": "PASS",
-            "detail": "未在 Knowledge Base 65+ 款已购 SaaS 资产底册中直接命中",
+            "detail": "未在 65+ 款已购 SaaS 资产底册中直接命中",
         })
 
         # Step 2: Competitor overlap
@@ -1344,7 +1349,7 @@ def build_notion_blocks(
     callout_text = (
         f"全量分页对账巡检：已扫描 AppSumo 目录全部 {scanned} / {declared} 款 Deals "
         f"({status_str}，共发起 {requests} 批次请求)，"
-        f"结合 Knowledge Base 66 款已购 SaaS 资产底册严格防重对账。"
+        f"结合 66 款已购 SaaS 资产底册严格防重对账。"
     )
 
     blocks = [

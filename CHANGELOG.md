@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.7 - 2026-10-16
+
+### Fixed
+- **Open-Source Privacy Compliance**: Virtualized all central memory registry tokens and machine-local absolute paths across CLI help, documentation, and advisory scripts; enabled dynamic home directory discovery for owned asset catalogs.
+
 ## 0.5.6 - 2026-10-12
 
 ### Added
@@ -7,7 +12,7 @@
 - **Full Deal Attributes & Alternative-To Enrichment (`enrich_deals_with_raw_metadata`)**: Unpacks and merges rich `raw_json` metadata from SQLite across all candidate deals, restoring `alternative_to` competitor markers (available on 295/439 deals), `card_description`, and taxonomy that were previously dropped by lightweight list projections.
 - **Expanded Competitor & Saturated Category Coverage**:
   - Mapped CRM competitors (`HubSpot`, `Pipedrive`, `Salesforce`, `Zoho`) to `FluentCRM + Clodura.AI`.
-  - Mapped Influencer/UGC platforms (`Modash`, `Upfluence`, `Grin`) to Knowledge Base owned asset `EezyCollab` (activated lifetime deal).
+  - Mapped Influencer/UGC platforms (`Modash`, `Upfluence`, `Grin`) to owned asset `EezyCollab` (activated lifetime deal).
   - Mapped long-form writing tools (`Novelcrafter`, `Scrivener`) to local `NewType / Luogen + Claude / Gemini` agent suites.
   - Mapped e-commerce store builders (`Shopify`, `BigCommerce`, `Squarespace`) to `Zylvie + WooCommerce / ShopEngine Plus`.
   - Saturated `crm`, `email-sms-marketing`, `chatbots-ai-agents`, `seo-analytics`, `content-marketing`, `customer-support`, and `ecommerce` categories.
@@ -28,7 +33,7 @@
 ### Fixed
 
 - **Pre-Sync Weekly Skip Gate Optimization**: Optimized `scripts/run_appsumo_buy_advisor.sh` to check the weekly atomic success marker (`YYYY-WW.success`) *before* executing `deals sync`. When skipped, execution completes in 0.11s with 0 network calls (previously 3.4s with 4 redundant HTTP requests).
-- **Owner Surface Clarification**: Updated `docs/cadence/CAD-20261007-appsumo-weekly-buy-advisor.md` and Knowledge Base `cadence-commands.md` to cleanly delineate `Output Owner` (Notion Task Page, local SQLite deals snapshot, receipts) from `Source Refs` (`appsumo_purchased_assets.md`), strictly adhering to `scheduled-task-rescheduler` standards.
+- **Owner Surface Clarification**: Updated `docs/cadence/CAD-20261007-appsumo-weekly-buy-advisor.md` and central `cadence-commands.md` to cleanly delineate `Output Owner` (Notion Task Page, local SQLite deals snapshot, receipts) from `Source Refs` (`appsumo_purchased_assets.md`), strictly adhering to `scheduled-task-rescheduler` standards.
 
 ## 0.5.4 - 2026-10-08
 
@@ -36,8 +41,8 @@
 
 - **Cadence Contract & SSOT Multi-Surface Synchronization**: Fully audited and synchronized `CAD-20261007-appsumo-weekly-buy-advisor` across all three authoritative surfaces per `scheduled-task-rescheduler` standards:
   - Project repository card (`docs/cadence/CAD-20261007-appsumo-weekly-buy-advisor.md`): Updated Activation Gate to certify 31/31 Python unit tests and all Go tests passing.
-  - Knowledge Base authoritative registry (`cadence-commands.md`): Reconciled `Updated: 2026-10-08`, 66+ owned assets, full live catalog (338+ deals), updated Activation Gate, and synchronized Prompt.
-  - Antigravity sidecar projection (`~/.config/appsumo-cli/sidecar.json`): Updated prompt in `args[3]` word-for-word with the canonical card, eliminating prompt split-brain drift.
+  - Central authoritative registry (`cadence-commands.md`): Reconciled `Updated: 2026-10-08`, 66+ owned assets, full live catalog (338+ deals), updated Activation Gate, and synchronized Prompt.
+  - Antigravity sidecar projection (`config/sidecars/appsumo-weekly-buy-advisor/sidecar.json`): Updated prompt in `args[3]` word-for-word with the canonical card, eliminating prompt split-brain drift.
 - **Intake & Observability Audit**: Verified catalog sync freshness via `appsumo deals sync`, full pagination verification (338/338 deals across 4 pages), weekly atomic skip marker (`2026-W40.success`), durable state cursor (`state.json`), and live Notion Task Page (`3f2e1b43-2393-815a-97e2-e06c9efcbfdc`) synchronization. Confirmed no extra sidecars needed (skip redundant cadence creation).
 
 ## 0.5.3 - 2026-10-08
@@ -61,7 +66,7 @@
 - **Diagnostic-First deal inspector (`explain`)**: Added `appsumo deals explain <product-slug-or-url>` to the Go CLI and `explain` subcommand to `appsumo_buy_advisor.py`, providing operators and agents with an interactive inspection entrypoint. Displays the full deal profile, canonical slug extraction, and a 9-step rule audit chain (Rule 0 through Rule 8) detailing why a deal was accepted or filtered out, which rule was triggered, and what existing asset acts as its replacement.
 - **SSOT audit engine (`audit_deal_steps`)**: Consolidated audit logic into `DealAuditor.audit_deal_steps()`, with `audit_deal()` and `explain_deal()` both deriving from the same single source of truth, completely eliminating logic drift or fake facade algorithms.
 - **CLI global availability**: Symlinked `~/.local/bin/appsumo-buy-advisor` to `scripts/appsumo_buy_advisor.py` and rebuilt `appsumo` binary in `~/.local/bin/appsumo`, satisfying the Zero "Command Not Found" invariant from any working directory.
-- **Register FlipBooklets in Knowledge Base**: Registered `FlipBooklets` in `05 - Memory Center/tools/appsumo_purchased_assets.md` (66 total lifetime assets), mapping `flipbooklets-cli` and Cloudflare edge proxy.
+- **Register FlipBooklets in Asset Registry**: Registered `FlipBooklets` in `appsumo_purchased_assets.md` (66 total lifetime assets), mapping `flipbooklets-cli` and Cloudflare edge proxy.
 
 ### Fixed
 
@@ -94,7 +99,7 @@
 - Add Weekly Buy Advisor engine (`scripts/appsumo_buy_advisor.py`) and runner wrapper (`scripts/run_appsumo_buy_advisor.sh`): automatically audits AppSumo candidate deals against 65+ lifetime purchased assets (`05 - Memory Center/tools/appsumo_purchased_assets.md`).
 - Implement zero-recommendation invariant and anti-duplicate guards: features word-boundary token matching, 40+ competitor `alternative_to` mappings (Zapier/Make -> Albato+n8n, Trustpilot -> TrustMate, Buffer -> Zernio, ThriveCart -> Zylvie, OptinMonster -> Taku, etc.), saturated category guards (Reviews, Popups, Scheduling, Forms, Social), Google Sheets AI add-ons, WooCommerce builders, client portals, dev tools, and $0 / non-software item filters. Emits zero recommendations if all deals are duplicate or low leverage.
 - Add comprehensive unit test suite `scripts/test_appsumo_buy_advisor.py` (13/13 passing test cases covering exact matches, fuzzy/token normalization, alternative_to aliases, saturated subcategories, free/low-value filters, and zero recommendations).
-- Register weekly cadence card `CAD-20261007-appsumo-weekly-buy-advisor` (runs every Monday at 09:00) across Knowledge Base `00 - System/registries/cadence-commands.md`, local documentation `docs/cadence/CAD-20261007-appsumo-weekly-buy-advisor.md`, and launchd sidecar `~/.config/appsumo-cli/sidecar.json`.
+- Register weekly cadence card `CAD-20261007-appsumo-weekly-buy-advisor` (runs every Monday at 09:00) across central cadence registries, local documentation `docs/cadence/CAD-20261007-appsumo-weekly-buy-advisor.md`, and launchd sidecar `config/sidecars/appsumo-weekly-buy-advisor/sidecar.json`.
 - Add automated sync of advisory receipts to Notion Goal/Task pages (`3f2e1b43-2393-815a-97e2-e06c9efcbfdc`).
 
 ## 0.4.1 - 2026-10-07

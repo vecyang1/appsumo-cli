@@ -11,14 +11,14 @@
 | Updated | `2026-10-08` |
 | Created By | `Vec + Antigravity Agent` |
 | Planned By | `Vec + Antigravity Agent` |
-| Project Ref | `Weekly AppSumo deal scanning and recommendation engine cross-referenced with Knowledge Base 66+ purchased SaaS assets and local developer skills; strictly filters duplicate wheels across full live catalog (338+ deals); recommends nothing if no capability gaps exist; syncs to Notion` |
+| Project Ref | `Weekly AppSumo deal scanning and recommendation engine cross-referenced with 66+ purchased SaaS assets and local developer skills; strictly filters duplicate wheels across full live catalog (338+ deals); recommends nothing if no capability gaps exist; syncs to Notion` |
 | Execution Root | `{A_CODING_ROOT}/26.05.23-appsumo-cli` |
 | Root Alias | `A_CODING_ROOT` |
-| Runtime Project Label | `26.06.06 Creator Vault` |
+| Runtime Project Label | `appsumo-weekly-buy-advisor` |
 | Primary Runtime | `antigravity` |
-| Runtime Systems | `Antigravity sidecar appsumo-weekly-buy-advisor; scripts/run_appsumo_buy_advisor.sh; scripts/appsumo_buy_advisor.py; appsumo CLI; Knowledge Base Memory Center` |
+| Runtime Systems | `Antigravity sidecar appsumo-weekly-buy-advisor; scripts/run_appsumo_buy_advisor.sh; scripts/appsumo_buy_advisor.py; appsumo CLI; Memory Center` |
 | Runtime Locator | `Antigravity → Scheduled Tasks → AppSumo Weekly Buy Advisor` (`appsumo-weekly-buy-advisor`) |
-| Canonical Path | `~/.config/appsumo-cli/sidecar.json` |
+| Canonical Path | `config/sidecars/appsumo-weekly-buy-advisor/sidecar.json` |
 | Schedule Frequency | `weekly` |
 | Schedule Expression | `0 9 * * 1` (09:00 Asia/Bangkok weekly Monday) |
 | Timezone | `Asia/Bangkok` |
@@ -48,21 +48,21 @@
 | Network Required | `true` |
 | Manual Paste Required | `false` |
 | Manual Paste Payload | `not_required_sidecar_active` |
-| Source Refs | `~/.config/appsumo-cli/sidecar.json; 26.05.23-appsumo-cli/scripts/appsumo_buy_advisor.py; 05 - Memory Center/tools/appsumo_purchased_assets.md` |
+| Source Refs | `config/sidecars/appsumo-weekly-buy-advisor/sidecar.json; scripts/appsumo_buy_advisor.py` |
 | Review Judgment | `Active weekly AppSumo purchase advisor: prevents impulse buying and redundant SaaS accumulation by cross-checking all candidate lifetime deals against Vec's 66+ existing tools and skills across full catalog (338+ deals). Zero recommendation when no gaps exist; high-signal recommendation when genuine gaps appear.` |
 
 #### Prompt
 
 ```text
 AppSumo 每周资产对账与采购顾问 / AppSumo Weekly Buy Advisor & Asset Deduplication
-Antigravity project label: 26.06.06 Creator Vault
+Antigravity project label: appsumo-weekly-buy-advisor
 Working directory: .
 Cadence card: CAD-20261007-appsumo-weekly-buy-advisor
 
 Language requirement: All conversation replies, findings, and summary messages to the user must be in Chinese (全程使用中文回复与输出汇报).
 
 Before doing work:
-cd "."
+# working directory is repository root
 
 执行 AppSumo 每周资产对账与采购决策体系：
 

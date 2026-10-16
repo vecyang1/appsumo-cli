@@ -380,7 +380,7 @@ func (rt *runtime) dealsExplainCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "explain <product-slug-or-url>",
 		Short: "Diagnose and explain buy advisor audit verdict for a specific deal",
-		Long: "Diagnostic-First inspector that evaluates a deal against the Knowledge Base owned asset portfolio\n" +
+		Long: "Diagnostic-First inspector that evaluates a deal against the owned asset portfolio\n" +
 			"and decision rules, showing which rule hit, why filtered, and the exact verdict.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
