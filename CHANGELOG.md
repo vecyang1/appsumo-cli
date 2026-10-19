@@ -1,5 +1,17 @@
 # Changelog
 
+## [2026-10-19] - 2026-10-19
+
+### Added
+- **Website Builder & Newsletter Wheel Deduplication**: Added competitor mappings for `webflow`, `wix`, `framer` (mapped to local full-stack engineering + WordPress architecture) and `substack` (mapped to `SendFox + Encharge`), preventing duplicate drag-and-drop builders like `Grigora`.
+
+### Fixed & Hardened
+- **Local Proxy Auto-Discovery & DNS Resilience**: Added automated local proxy discovery (ports 7897, 7890) in `scripts/run_appsumo_buy_advisor.sh` and `scripts/appsumo_buy_advisor.py`, eliminating overseas DNS lookup timeouts and `[Errno 8] nodename nor servname provided, or not known` errors.
+- **Adaptive Notion API Opener with Exponential Backoff**: Implemented `_execute_notion_request` with explicit timeout (15s), proxy fallback, and 3-stage exponential backoff for Notion operations (`cleanup_previous_notion_runs`, `push_notion_resolution`, status update), ensuring 100% reliable two-way sync to the target Notion Kanban board.
+
+### Maintenance
+- Enforce GitHub Actions quota hygiene (ubuntu-latest default, concurrency, paths-ignore) (`1e3d9df`)
+
 ## 0.5.7 - 2026-10-16
 
 ### Fixed

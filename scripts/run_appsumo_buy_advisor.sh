@@ -8,6 +8,22 @@ mkdir -p "$LOG_DIR"
 
 echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Starting AppSumo Weekly Buy Advisor Cadence ==="
 
+# Auto-detect local proxy port for robust overseas network traversal and DNS fallback
+if [ -z "${http_proxy:-}" ] && [ -z "${HTTP_PROXY:-}" ]; then
+  for port in 7897 7890; do
+    if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+      export http_proxy="http://127.0.0.1:$port"
+      export https_proxy="http://127.0.0.1:$port"
+      export all_proxy="socks5://127.0.0.1:$port"
+      export HTTP_PROXY="http://127.0.0.1:$port"
+      export HTTPS_PROXY="http://127.0.0.1:$port"
+      export ALL_PROXY="socks5://127.0.0.1:$port"
+      echo "[*] Injected local proxy configuration (port $port) for overseas APIs"
+      break
+    fi
+  done
+fi
+
 # 1. Incremental Skip Gate: check if weekly task already completed
 WEEK_MARKER="$REPO_ROOT/.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/$(date +%Y-W%W).success"
 FORCE=false

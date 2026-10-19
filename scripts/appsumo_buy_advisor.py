@@ -201,6 +201,11 @@ COMPETITOR_TO_OWNED_ASSET = {
     "shopify": "Zylvie (已购终身独立结算系统) + WooCommerce/ShopEngine Plus",
     "bigcommerce": "Zylvie + WooCommerce/ShopEngine Plus",
     "squarespace": "Zylvie + WooCommerce/ShopEngine Plus",
+    # Website Builders & Newsletters
+    "webflow": "本地全栈工程 + WordPress (已拥有生产级多站点架构与独立建站能力)",
+    "wix": "本地全栈工程 + WordPress",
+    "framer": "本地全栈工程 + WordPress",
+    "substack": "SendFox + Encharge (已拥有邮件订阅营销与受众资产)",
     # Security & Error Monitoring
     "sentry": "本地 security-scan + github-ops 技能及 GitHub 原生安全工作流",
     "gitlab": "本地 security-scan + github-ops 技能及 GitHub 原生安全工作流",
@@ -1251,6 +1256,45 @@ def fetch_candidate_deals(
         return [], {"error": str(e), "complete": False, "unique_deals": 0}
 
 
+def _get_notion_opener() -> Any:
+    """Returns an OpenerDirector with local proxy configured if available, falling back cleanly."""
+    import urllib.request
+    proxy_url = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY") or os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY")
+    if not proxy_url:
+        import socket
+        for port in (7897, 7890):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.2)
+                    if s.connect_ex(("127.0.0.1", port)) == 0:
+                        proxy_url = f"http://127.0.0.1:{port}"
+                        break
+            except Exception:
+                pass
+    if proxy_url:
+        return urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
+    return urllib.request.build_opener()
+
+
+def _execute_notion_request(req: Any, timeout: int = 15, max_retries: int = 3) -> Optional[bytes]:
+    """Executes a Notion API request with adaptive retry, exponential backoff, and proxy fallback."""
+    import time
+    opener = _get_notion_opener()
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            with opener.open(req, timeout=timeout) as resp:
+                if resp.status in (200, 201, 204):
+                    return resp.read()
+                return resp.read()
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries:
+                time.sleep(1.0 * attempt)
+    print(f"Notice: Notion request failed after {max_retries} attempts: {last_err}", file=sys.stderr)
+    return None
+
+
 def cleanup_previous_notion_runs(page_id: str, token: str) -> None:
     """Removes prior automated cadence runs from the Notion page to maintain single authoritative verdict."""
     import urllib.request
@@ -1261,19 +1305,17 @@ def cleanup_previous_notion_runs(page_id: str, token: str) -> None:
     }
     try:
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        resp_data = _execute_notion_request(req, timeout=15)
+        if not resp_data:
+            return
+        data = json.loads(resp_data.decode("utf-8"))
         results = data.get("results", [])
         # Keep the first block (original prompt / task description)
         for block in results[1:]:
             bid = block.get("id")
             del_url = f"https://api.notion.com/v1/blocks/{bid}"
             del_req = urllib.request.Request(del_url, headers=headers, method="DELETE")
-            try:
-                with urllib.request.urlopen(del_req) as _:
-                    pass
-            except Exception:
-                pass
+            _execute_notion_request(del_req, timeout=10, max_retries=2)
     except Exception as e:
         print(f"Notice: cleanup previous Notion blocks skipped: {e}", file=sys.stderr)
 
@@ -1306,12 +1348,10 @@ def push_notion_resolution(page_id: str, title: str, blocks: List[Dict[str, Any]
     }
     payload = {"children": blocks}
     req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="PATCH")
-    try:
-        with urllib.request.urlopen(req) as resp:
-            append_ok = resp.status == 200
-    except Exception as e:
-        print(f"Error pushing blocks to Notion: {e}", file=sys.stderr)
-        append_ok = False
+    resp_bytes = _execute_notion_request(req, timeout=15, max_retries=3)
+    append_ok = resp_bytes is not None
+    if not append_ok:
+        print("Error pushing blocks to Notion: request failed after retries", file=sys.stderr)
 
     # 3. Update page Status to Done
     page_url = f"https://api.notion.com/v1/pages/{page_id}"
@@ -1322,11 +1362,7 @@ def push_notion_resolution(page_id: str, title: str, blocks: List[Dict[str, Any]
         headers=headers,
         method="PATCH",
     )
-    try:
-        with urllib.request.urlopen(page_req) as _:
-            pass
-    except Exception as e:
-        print(f"Notice: updating page Status property skipped: {e}", file=sys.stderr)
+    _execute_notion_request(page_req, timeout=15, max_retries=3)
 
     return append_ok
 
