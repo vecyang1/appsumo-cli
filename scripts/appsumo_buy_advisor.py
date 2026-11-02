@@ -373,8 +373,12 @@ class AssetKnowledgeBase:
 class DealAuditor:
     """Evaluates AppSumo deals against owned assets and capability needs."""
 
-    def __init__(self, kb: AssetKnowledgeBase):
+    def __init__(self, kb: AssetKnowledgeBase, user_directives: Optional[Dict[str, Any]] = None):
         self.kb = kb
+        self.user_directives = user_directives or {}
+        self.user_blacklist = [k.lower().strip() for k in (self.user_directives.get("blacklist") or []) if k.strip()]
+        self.user_new_assets = [k.lower().strip() for k in (self.user_directives.get("new_assets") or []) if k.strip()]
+        self.user_wishlist = [k.lower().strip() for k in (self.user_directives.get("wishlist") or []) if k.strip()]
 
     def audit_deal_steps(self, deal: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -430,6 +434,57 @@ class DealAuditor:
                 "score": score,
                 "steps": steps,
             }
+
+        text_to_check = re.sub(r"[-_]", " ", f"{name} {desc} {subcategory} {category}").lower()
+
+        # Step 0A: User Blacklist Veto (Cloud Co-maintained Doc Directives)
+        name_low = name.lower()
+        slug_low = slug.lower()
+        for bkw in self.user_blacklist:
+            bkw_norm = re.sub(r"[-_]", " ", bkw).strip()
+            if (
+                bkw in text_to_check
+                or bkw_norm in text_to_check
+                or bkw in name_low
+                or bkw in slug_low
+                or (len(name_low) >= 4 and name_low in bkw)
+                or (len(slug_low) >= 4 and slug_low in bkw)
+            ):
+                steps.append({
+                    "step": 0,
+                    "rule_name": "User Blacklist Veto",
+                    "status": "HIT",
+                    "detail": f"命中云端协同文档人工黑名单禁令: 「{bkw}」",
+                })
+                return _verdict(
+                    False,
+                    "Rule 0A (云端协同文档人工黑名单禁令)",
+                    f"命中云端协同文档人工黑名单禁令: 「{bkw}」，明确不建议采购",
+                )
+
+        # Step 0B: User Declared Owned Assets (Cloud Co-maintained Doc Directives)
+        for nakw in self.user_new_assets:
+            nakw_norm = re.sub(r"[-_]", " ", nakw).strip()
+            if (
+                nakw in name_low
+                or nakw in slug_low
+                or nakw_norm in name_low
+                or nakw in text_to_check
+                or (len(name_low) >= 4 and name_low in nakw)
+                or (len(slug_low) >= 4 and slug_low in nakw)
+            ):
+                steps.append({
+                    "step": 0,
+                    "rule_name": "User Declared Owned Asset",
+                    "status": "HIT",
+                    "detail": f"已在云端协同文档标记为已拥有资产: 「{nakw}」",
+                })
+                return _verdict(
+                    False,
+                    "Rule 0B (云端协同文档新购资产对账)",
+                    f"已在云端协同文档标记为已拥有资产: 「{nakw}」，无需重复购置",
+                    replacement=nakw,
+                )
 
         # Step 0: Free / Lead magnet / $0 items
         if is_unresolved:
@@ -813,14 +868,39 @@ class DealAuditor:
         elif price <= 129:
             score += 10.0
 
+        # Step 8B: User Wishlist Alignment Boost (Cloud Co-maintained Doc Directives)
+        matched_wish = None
+        for wkw in self.user_wishlist:
+            wkw_norm = re.sub(r"[-_]", " ", wkw).strip()
+            if (
+                wkw in text_to_check
+                or wkw_norm in text_to_check
+                or wkw in name.lower()
+                or wkw in slug.lower()
+                or wkw_norm in name.lower()
+            ):
+                matched_wish = wkw
+                score += 50.0
+                steps.append({
+                    "step": 8,
+                    "rule_name": "User Wishlist Alignment",
+                    "status": "BOOST",
+                    "detail": f"🎯 命中云端协同文档关注意向: 「{wkw}」 (+50.0 分加权)",
+                })
+                break
+
         steps.append({
             "step": 8,
             "rule_name": "Candidate Scoring",
             "status": "PASS",
-            "detail": f"综合评分: {score:.1f} 分 (评分权重: {(rating-4.0)*40:.1f}, 评价权重: {min(30.0, reviews*0.5):.1f})",
+            "detail": f"综合评分: {score:.1f} 分 (评分权重: {(rating-4.0)*40:.1f}, 评价权重: {min(30.0, reviews*0.5):.1f}{f', 意向加权: +50.0' if matched_wish else ''})",
         })
 
-        return _verdict(True, "Rule 8 (空白能力候选通过)", "通过资产对账与空白能力门禁，属于未拥有的高分软件候选", score=score)
+        rec_reason = "通过资产对账与空白能力门禁，属于未拥有的高分软件候选"
+        if matched_wish:
+            rec_reason = f"🎯 契合云端协同关注意向「{matched_wish}」，并通过空白能力门禁的高分软件候选"
+
+        return _verdict(True, "Rule 8 (空白能力候选通过)", rec_reason, score=score)
 
     def audit_deal(self, deal: Dict[str, Any]) -> Tuple[bool, str, float]:
         res = self.audit_deal_steps(deal)
@@ -1295,35 +1375,244 @@ def _execute_notion_request(req: Any, timeout: int = 15, max_retries: int = 3) -
     return None
 
 
-def cleanup_previous_notion_runs(page_id: str, token: str) -> None:
-    """Removes prior automated cadence runs from the Notion page to maintain single authoritative verdict."""
+def extract_notion_block_text(block: Dict[str, Any]) -> str:
+    """Extracts plain text content from a Notion block across all text-bearing types."""
+    btype = block.get("type", "")
+    if btype and btype in block and isinstance(block[btype], dict):
+        rt = block[btype].get("rich_text", [])
+        if isinstance(rt, list):
+            return "".join(t.get("plain_text", "") for t in rt if isinstance(t, dict)).strip()
+    return ""
+
+
+def fetch_cloud_doc_directives(page_id: str, token: str) -> Dict[str, Any]:
+    """
+    Reads human directives, wishlist, blacklist, and feedback from Notion co-maintained doc.
+    Preserves and respects user manual inputs.
+    """
+    directives: Dict[str, Any] = {
+        "wishlist": [],
+        "blacklist": [],
+        "new_assets": [],
+        "feedback": [],
+        "raw_directives_found": False,
+        "has_human_zone": False,
+    }
+    if not token or not page_id:
+        return directives
+
     import urllib.request
-    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Notion-Version": "2022-06-28",
     }
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children?page_size=100"
     try:
         req = urllib.request.Request(url, headers=headers)
-        resp_data = _execute_notion_request(req, timeout=15)
-        if not resp_data:
-            return
-        data = json.loads(resp_data.decode("utf-8"))
-        results = data.get("results", [])
-        # Keep the first block (original prompt / task description)
-        for block in results[1:]:
-            bid = block.get("id")
-            del_url = f"https://api.notion.com/v1/blocks/{bid}"
-            del_req = urllib.request.Request(del_url, headers=headers, method="DELETE")
-            _execute_notion_request(del_req, timeout=10, max_retries=2)
+        resp_bytes = _execute_notion_request(req, timeout=15)
+        if not resp_bytes:
+            return directives
+
+        data = json.loads(resp_bytes.decode("utf-8"))
+        blocks = data.get("results", [])
+
+        def _process_children(parent_id: str, target_key: str):
+            c_url = f"https://api.notion.com/v1/blocks/{parent_id}/children?page_size=50"
+            c_req = urllib.request.Request(c_url, headers=headers)
+            c_resp = _execute_notion_request(c_req, timeout=10)
+            if not c_resp:
+                return
+            c_data = json.loads(c_resp.decode("utf-8"))
+            for item in c_data.get("results", []):
+                itxt = extract_notion_block_text(item)
+                if not itxt:
+                    continue
+                clean = re.sub(r"^[\s•\-\*]+", "", itxt).strip()
+                if (
+                    clean.startswith("（在此")
+                    or clean.startswith("(在此")
+                    or clean.startswith("（示例")
+                    or clean.startswith("(示例")
+                ):
+                    continue
+                if clean:
+                    directives[target_key].append(clean)
+                    directives["raw_directives_found"] = True
+
+        for block in blocks:
+            txt = extract_notion_block_text(block)
+            if "【人工采购意向与协同反馈区" in txt or "Human Directives & Feedback" in txt:
+                directives["has_human_zone"] = True
+
+            target_key = None
+            if "【当前关注领域与愿望清单" in txt or "Wishlist" in txt:
+                target_key = "wishlist"
+            elif "【黑名单与绝对不买禁令" in txt or "Blacklist" in txt:
+                target_key = "blacklist"
+            elif "【近期新购/外部资产录入" in txt or "Newly Acquired" in txt:
+                target_key = "new_assets"
+            elif "【对往期推荐的反馈与批注" in txt or "Feedback on Prior Runs" in txt:
+                target_key = "feedback"
+
+            if target_key:
+                directives["has_human_zone"] = True
+                if block.get("has_children"):
+                    _process_children(block.get("id"), target_key)
+
     except Exception as e:
-        print(f"Notice: cleanup previous Notion blocks skipped: {e}", file=sys.stderr)
+        print(f"Notice: fetch cloud doc directives encountered non-fatal error: {e}", file=sys.stderr)
+
+    return directives
 
 
-def push_notion_resolution(page_id: str, title: str, blocks: List[Dict[str, Any]]) -> bool:
-    """Appends blocks to Notion page using notion token and sets Status to Done."""
+def build_human_directives_blocks() -> List[Dict[str, Any]]:
+    """Builds the canonical Zone 1 Human Directives & Feedback blocks."""
+    return [
+        {
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "icon": {"type": "emoji", "emoji": "👤"},
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {"content": "【人工采购意向与协同反馈区 / Human Directives & Feedback】\n"},
+                        "annotations": {"bold": True, "color": "blue"},
+                    },
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": (
+                                "协同机制：Vec 在此输入关注领域、黑名单禁令或新购资产。"
+                                "每周一早 09:00 Agent 自动读取作为最高优先级输入对账，绝不覆盖您编辑的内容。"
+                            )
+                        },
+                    },
+                ],
+            },
+        },
+        {
+            "object": "block",
+            "type": "toggle",
+            "toggle": {
+                "rich_text": [
+                    {"type": "text", "text": {"content": "🎯 【当前关注领域与愿望清单 (Wishlist)】"}, "annotations": {"bold": True}}
+                ],
+                "children": [
+                    {
+                        "object": "block",
+                        "type": "bulleted_list_item",
+                        "bulleted_list_item": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {
+                                        "content": "（在此填写您希望寻找的工具类型/场景，例如：海外短剧/视频AI剪辑与本地化、SEO反向链接收录监控等）"
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        },
+        {
+            "object": "block",
+            "type": "toggle",
+            "toggle": {
+                "rich_text": [
+                    {"type": "text", "text": {"content": "🛑 【黑名单与绝对不买禁令 (Blacklist & Vetoes)】"}, "annotations": {"bold": True}}
+                ],
+                "children": [
+                    {
+                        "object": "block",
+                        "type": "bulleted_list_item",
+                        "bulleted_list_item": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {
+                                        "content": "（在此填写坚决不买或已有替代品的品类，例如：普通客服聊天插件/CRM、Canva模板包与商业教程等）"
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        },
+        {
+            "object": "block",
+            "type": "toggle",
+            "toggle": {
+                "rich_text": [
+                    {"type": "text", "text": {"content": "🛒 【近期新购/外部资产录入 (Newly Acquired Assets)】"}, "annotations": {"bold": True}}
+                ],
+                "children": [
+                    {
+                        "object": "block",
+                        "type": "bulleted_list_item",
+                        "bulleted_list_item": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {
+                                        "content": "（在此登记人工新购入或外部获得的软件资产，Agent 读取后直接加入防重底座并同步本地）"
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        },
+        {
+            "object": "block",
+            "type": "toggle",
+            "toggle": {
+                "rich_text": [
+                    {"type": "text", "text": {"content": "💬 【对往期推荐的反馈与批注 (User Feedback on Prior Runs)】"}, "annotations": {"bold": True}}
+                ],
+                "children": [
+                    {
+                        "object": "block",
+                        "type": "bulleted_list_item",
+                        "bulleted_list_item": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {
+                                        "content": "（在此对往期推荐填写决策意见，例如：“WP Reset: 暂不考虑”、“Memogram: 已购入/不匹配”）"
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        },
+        {"object": "block", "type": "divider", "divider": {}},
+    ]
+
+
+def sync_co_maintained_notion_doc(
+    page_id: str,
+    title: str,
+    new_agent_blocks: List[Dict[str, Any]],
+    directives: Optional[Dict[str, Any]] = None,
+    token: Optional[str] = None,
+) -> bool:
+    """
+    Safely co-maintains the cloud Notion document without erasing human manual inputs.
+    - Preserves block 0 (original task/prompt).
+    - Preserves Zone 1 (Human Directives & Feedback). Creates it if absent.
+    - Archives prior agent run summaries into Zone 3 (Historical Archive).
+    - Replaces only Zone 2 (Agent Automated Run Verdict).
+    - Updates page title and status property atomically.
+    """
     env_path = Path.home() / ".gemini/antigravity/skills/notion-mcp-connector/.env"
-    token = os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY")
+    token = token or os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY")
     if not token and env_path.exists():
         for line in env_path.read_text().splitlines():
             if line.startswith("NOTION_TOKEN=") or line.startswith("NOTION_API_KEY="):
@@ -1336,35 +1625,167 @@ def push_notion_resolution(page_id: str, title: str, blocks: List[Dict[str, Any]
 
     import urllib.request
 
-    # 1. Clean up older run blocks to prevent duplicate accumulation
-    cleanup_previous_notion_runs(page_id, token)
-
-    # 2. Append fresh authoritative verdict blocks
-    url = f"https://api.notion.com/v1/blocks/{page_id}/children"
     headers = {
         "Authorization": f"Bearer {token}",
         "Notion-Version": "2022-06-28",
         "Content-Type": "application/json",
     }
-    payload = {"children": blocks}
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="PATCH")
-    resp_bytes = _execute_notion_request(req, timeout=15, max_retries=3)
-    append_ok = resp_bytes is not None
-    if not append_ok:
-        print("Error pushing blocks to Notion: request failed after retries", file=sys.stderr)
 
-    # 3. Update page Status to Done
+    # 1. Fetch current blocks
+    get_url = f"https://api.notion.com/v1/blocks/{page_id}/children?page_size=100"
+    append_url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+    req = urllib.request.Request(get_url, headers=headers)
+    resp_bytes = _execute_notion_request(req, timeout=15)
+    if not resp_bytes:
+        return False
+
+    data = json.loads(resp_bytes.decode("utf-8"))
+    existing_blocks = data.get("results", [])
+
+    has_human_zone = False
+    archive_block_id = None
+    agent_block_ids: List[str] = []
+    prior_summary_items: List[str] = []
+    prior_date_str = ""
+
+    for idx, block in enumerate(existing_blocks):
+        txt = extract_notion_block_text(block)
+        bid = block.get("id")
+        btype = block.get("type", "")
+
+        # Always preserve block 0 (original prompt)
+        if idx == 0:
+            continue
+
+        # Human Zone Detection
+        if (
+            "【人工采购意向与协同反馈区" in txt
+            or "Human Directives & Feedback" in txt
+            or "【当前关注领域与愿望清单" in txt
+            or "【黑名单与绝对不买禁令" in txt
+            or "【近期新购/外部资产录入" in txt
+            or "【对往期推荐的反馈与批注" in txt
+        ):
+            has_human_zone = True
+            continue
+
+        # Divider between zones
+        if btype == "divider" and has_human_zone and not agent_block_ids:
+            continue
+
+        # Archive Block Detection
+        if "【往期对账与决策留痕" in txt or "Historical Archive" in txt:
+            archive_block_id = bid
+            continue
+
+        # Agent blocks detection
+        if (
+            "🎯 AppSumo 每周全量资产对账与推荐巡检" in txt
+            or "全量分页对账巡检" in txt
+            or "云端协同指令已生效" in txt
+            or ("发现" in txt and "款真正填补空白能力的推荐软件" in txt)
+            or "核心结论：当前全量目录暂无必须购买的 Deal" in txt
+            or "🔍 查看详细过滤日志" in txt
+            or txt.startswith("• ")
+        ):
+            agent_block_ids.append(bid)
+            if "🎯 AppSumo 每周全量资产对账与推荐巡检" in txt:
+                m = re.search(r"\((\d{4}-\d{2}-\d{2}[^\)]*)\)", txt)
+                if m:
+                    prior_date_str = m.group(1).split()[0]
+            elif txt.startswith("• ") and ("($" in txt or "⭐️" in txt):
+                prior_summary_items.append(txt.split(":", 1)[0].replace("• ", "").strip())
+
+    # Build prior archive entry if we detected older recommendations
+    archive_entry_text = None
+    if prior_date_str:
+        if prior_summary_items:
+            archive_entry_text = f"• {prior_date_str}: 推荐 {len(prior_summary_items)} 款 ({', '.join(prior_summary_items)})"
+        else:
+            archive_entry_text = f"• {prior_date_str}: 全量对账无重叠缺口，0 采购建议"
+
+    # 2. If Human Zone does not exist, initialize it right now
+    if not has_human_zone:
+        init_payload = {"children": build_human_directives_blocks()}
+        append_req = urllib.request.Request(append_url, data=json.dumps(init_payload).encode("utf-8"), headers=headers, method="PATCH")
+        _execute_notion_request(append_req, timeout=15)
+
+    # 3. Delete ONLY prior agent blocks (Strictly preserving human and archive blocks)
+    for bid in agent_block_ids:
+        del_url = f"https://api.notion.com/v1/blocks/{bid}"
+        del_req = urllib.request.Request(del_url, headers=headers, method="DELETE")
+        _execute_notion_request(del_req, timeout=10, max_retries=2)
+
+    # 4. Append new agent verdict blocks
+    verdict_payload = {"children": new_agent_blocks}
+    append_verdict_req = urllib.request.Request(append_url, data=json.dumps(verdict_payload).encode("utf-8"), headers=headers, method="PATCH")
+    append_resp = _execute_notion_request(append_verdict_req, timeout=15, max_retries=3)
+    append_ok = append_resp is not None
+
+    # 5. Handle Archive Block
+    if archive_entry_text:
+        if archive_block_id:
+            arch_url = f"https://api.notion.com/v1/blocks/{archive_block_id}/children"
+            arch_payload = {
+                "children": [
+                    {
+                        "object": "block",
+                        "type": "bulleted_list_item",
+                        "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": archive_entry_text}}]},
+                    }
+                ]
+            }
+            arch_req = urllib.request.Request(arch_url, data=json.dumps(arch_payload).encode("utf-8"), headers=headers, method="PATCH")
+            _execute_notion_request(arch_req, timeout=10)
+        else:
+            # Create archive block
+            new_arch_payload = {
+                "children": [
+                    {
+                        "object": "block",
+                        "type": "toggle",
+                        "toggle": {
+                            "rich_text": [
+                                {"type": "text", "text": {"content": "📜 【往期对账与决策留痕 (Historical Archive)】"}, "annotations": {"bold": True}}
+                            ],
+                            "children": [
+                                {
+                                    "object": "block",
+                                    "type": "bulleted_list_item",
+                                    "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": archive_entry_text}}]},
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+            new_arch_req = urllib.request.Request(append_url, data=json.dumps(new_arch_payload).encode("utf-8"), headers=headers, method="PATCH")
+            _execute_notion_request(new_arch_req, timeout=15)
+
+    # 6. Update Page Title and Status
     page_url = f"https://api.notion.com/v1/pages/{page_id}"
-    page_payload = {"properties": {"Status": {"status": {"name": "Done"}}}}
-    page_req = urllib.request.Request(
-        page_url,
-        data=json.dumps(page_payload).encode("utf-8"),
-        headers=headers,
-        method="PATCH",
-    )
+    page_payload = {
+        "properties": {
+            "Name": {
+                "title": [
+                    {
+                        "type": "text",
+                        "text": {"content": "⭐️ AppSumo 协同采购决策与资产对账中枢 (AppSumo Buy Advisor Hub)"},
+                    }
+                ]
+            },
+            "Status": {"status": {"name": "Done"}},
+        }
+    }
+    page_req = urllib.request.Request(page_url, data=json.dumps(page_payload).encode("utf-8"), headers=headers, method="PATCH")
     _execute_notion_request(page_req, timeout=15, max_retries=3)
 
     return append_ok
+
+
+def push_notion_resolution(page_id: str, title: str, blocks: List[Dict[str, Any]], directives: Optional[Dict[str, Any]] = None) -> bool:
+    """Backward-compatible wrapper routing to safe cloud co-maintenance."""
+    return sync_co_maintained_notion_doc(page_id, title, blocks, directives=directives)
 
 
 def build_notion_blocks(
@@ -1372,6 +1793,7 @@ def build_notion_blocks(
     recommended: List[Tuple[Dict[str, Any], str, float]],
     rejections: List[Tuple[Dict[str, Any], str]],
     fetch_info: Optional[Dict[str, Any]] = None,
+    directives: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Builds rich Notion blocks for the cadence run with pagination reconciliation audit."""
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1385,7 +1807,7 @@ def build_notion_blocks(
     callout_text = (
         f"全量分页对账巡检：已扫描 AppSumo 目录全部 {scanned} / {declared} 款 Deals "
         f"({status_str}，共发起 {requests} 批次请求)，"
-        f"结合 66 款已购 SaaS 资产底册严格防重对账。"
+        f"结合 67 款已购 SaaS 资产底册及云端人工意向严格防重对账。"
     )
 
     blocks = [
@@ -1415,6 +1837,31 @@ def build_notion_blocks(
             },
         },
     ]
+
+    if directives and directives.get("raw_directives_found"):
+        w_cnt = len(directives.get("wishlist") or [])
+        b_cnt = len(directives.get("blacklist") or [])
+        a_cnt = len(directives.get("new_assets") or [])
+        f_cnt = len(directives.get("feedback") or [])
+        blocks.append({
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "icon": {"type": "emoji", "emoji": "📌"},
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": (
+                                f"云端协同指令已生效：融合人工意向清单 "
+                                f"(关注意向: {w_cnt} 条，黑名单禁令: {b_cnt} 条，云端新录入资产: {a_cnt} 条，往期反馈: {f_cnt} 条)"
+                            )
+                        },
+                        "annotations": {"bold": True, "color": "blue"},
+                    }
+                ],
+            },
+        })
 
     if not recommended:
         blocks.append({
@@ -1520,10 +1967,6 @@ def run_advisor(
     force: bool = False,
 ) -> Dict[str, Any]:
     """Main entrypoint for running the buy advisor."""
-    kb = AssetKnowledgeBase(assets_file)
-    auditor = DealAuditor(kb)
-    bin_path = resolve_binary()
-
     # 1. State / Skip Check
     state_dir = Path(__file__).resolve().parent.parent / ".run/cadence" / CADENCE_ID
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -1542,6 +1985,31 @@ def run_advisor(
             "recommended": [],
             "audited_count": 0,
         }
+
+    # Fetch human directives from cloud doc if notion_page_id provided
+    token = None
+    directives: Dict[str, Any] = {}
+    if notion_page_id:
+        env_path = Path.home() / ".gemini/antigravity/skills/notion-mcp-connector/.env"
+        token = os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY")
+        if not token and env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if line.startswith("NOTION_TOKEN=") or line.startswith("NOTION_API_KEY="):
+                    token = line.split("=", 1)[1].strip().strip("\"'")
+                    break
+        if token:
+            directives = fetch_cloud_doc_directives(notion_page_id, token)
+
+    kb = AssetKnowledgeBase(assets_file)
+    if directives.get("new_assets"):
+        for new_tool in directives["new_assets"]:
+            kb.tools[new_tool.lower()] = {
+                "name": new_tool,
+                "status": "active (cloud_doc)",
+                "category": "Cloud Doc Declared",
+            }
+    auditor = DealAuditor(kb, user_directives=directives)
+    bin_path = resolve_binary()
 
     # 2. Fetch candidates with full pagination tracking
     deals, fetch_info = fetch_candidate_deals(bin_path, limit=limit, scan_mode=scan_mode)
@@ -1587,6 +2055,7 @@ def run_advisor(
         "owned_assets_indexed": len(kb.tools),
         "rejected_count": len(rejections),
         "recommended_count": len(recommended),
+        "cloud_directives_found": directives.get("raw_directives_found", False),
         "recommended": [
             {
                 "name": d.get("name"),
@@ -1620,11 +2089,25 @@ def run_advisor(
             f"- **Audited Deals**: {len(deals)}",
             f"- **Owned Assets Indexed**: {len(kb.tools)}",
             f"- **Recommended Count**: {len(recommended)}",
+            f"- **Cloud Directives Active**: {directives.get('raw_directives_found', False)}",
             f"- **Status**: `{result['status']}`",
             "",
             "## Decision Verdict",
             "",
         ]
+
+        if directives and directives.get("raw_directives_found"):
+            receipt_md.append("### 云端协同输入指令 (Cloud Directives)")
+            if directives.get("wishlist"):
+                receipt_md.append(f"- **🎯 关注意向 (Wishlist)**: {', '.join(directives['wishlist'])}")
+            if directives.get("blacklist"):
+                receipt_md.append(f"- **🛑 黑名单禁令 (Blacklist)**: {', '.join(directives['blacklist'])}")
+            if directives.get("new_assets"):
+                receipt_md.append(f"- **🛒 云端录入已拥有资产 (New Assets)**: {', '.join(directives['new_assets'])}")
+            if directives.get("feedback"):
+                receipt_md.append(f"- **💬 往期反馈 (Feedback)**: {'; '.join(directives['feedback'])}")
+            receipt_md.append("")
+
         if not recommended:
             receipt_md.append(
                 f"> **✅ 当前无必须采购项**：已全量扫描 AppSumo {len(deals)} 款 Deals，全部与已拥有的 {len(kb.tools)} 款终身软件"
@@ -1656,6 +2139,7 @@ def run_advisor(
             "complete_pagination": pagination_complete,
             "requests_count": requests_count,
             "recommended_count": len(recommended),
+            "cloud_directives_found": directives.get("raw_directives_found", False),
             "receipt_path": str(receipt_path),
         }
         state_file.write_text(json.dumps(state_data, indent=2), encoding="utf-8")
@@ -1665,8 +2149,14 @@ def run_advisor(
 
         # Push to Notion if page ID provided
         if notion_page_id:
-            blocks = build_notion_blocks(len(deals), recommended, rejections, fetch_info=fetch_info)
-            push_notion_resolution(notion_page_id, "AppSumo Weekly Buy Advisor", blocks)
+            blocks = build_notion_blocks(len(deals), recommended, rejections, fetch_info=fetch_info, directives=directives)
+            sync_co_maintained_notion_doc(
+                page_id=notion_page_id,
+                title="⭐️ AppSumo 协同采购决策与资产对账中枢 (AppSumo Buy Advisor Hub)",
+                new_agent_blocks=blocks,
+                directives=directives,
+                token=token,
+            )
 
     return result
 

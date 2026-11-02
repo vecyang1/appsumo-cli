@@ -1,5 +1,24 @@
 # Changelog
 
+## [2026-11-02] - 2026-11-02
+
+### Added
+- **Cloud Co-maintained Document Hub (人机云端协同共建中枢)**: Transformed Notion target page `3f2e1b43-2393-815a-97e2-e06c9efcbfdc` into a living 3-Zone collaboration hub:
+  - **Zone 1 (Human-Controlled Directives)**: Provides 4 collapsible toggles for operator inputs: `⭐️ 关注意向清单 (Wishlist)`, `🚫 坚决不买黑名单 (Blacklist)`, `💼 新购资产底册补录 (Newly Acquired Assets)`, and `💬 往期反馈与调整备忘 (Operator Notes)`.
+  - **Zone 2 (Agent-Controlled Verdict)**: Dynamically refreshes weekly scan metrics, pagination completeness audit (0 truncation), and capability-gap recommendations.
+  - **Zone 3 (Historical Archive)**: Automatically folds previous run verdicts into an expandable toggle archive, preserving full timeline auditability without cluttering the active workspace.
+- **Bi-directional Human-in-the-Loop Directive Parsing**:
+  - `fetch_cloud_doc_directives`: Non-destructively reads and normalizes human directives from Zone 1.
+  - `Rule 0A (Human Blacklist Veto)`: Instant one-strike veto intercepting any deal matching operator blacklist terms.
+  - `Rule 0B (Human Declared Owned Asset Dedupe)`: Instant deduplication against operator-declared lifetime purchases before rule engine execution.
+  - `Rule 8B (Human Wishlist Alignment)`: Prioritizes and awards +50.0 score boost to candidate deals aligned with operator wishlist intents.
+- **Sidecard & Cadence Rescheduler Audit**: Audited cadence `CAD-20261007-appsumo-weekly-buy-advisor` and Antigravity sidecar `appsumo-weekly-buy-advisor`. Certified single-owner discipline; skipped redundant observation sidecards as weekly catalog churn is completely served with zero SQLite contention.
+
+### Fixed & Hardened
+- **Non-Destructive Notion Sync Architecture**: Replaced full-wipe `cleanup_previous_notion_runs` with surgical `sync_co_maintained_notion_doc`. Strictly preserves Block 0 (Slack prompt) and Blocks 1-6 (Zone 1 Human Directives), eliminating accidental operator data loss.
+- **Notion Block Children PATCH 301 Redirect Fix**: Separated GET query strings (`?page_size=100`) from PATCH URL (`/v1/blocks/{id}/children`), preventing HTTP 301 redirects and ensuring 100% reliable block appending via `urllib.request`.
+- **Unit Test Suite Expansion**: Added comprehensive test cases in `scripts/test_appsumo_buy_advisor.py` covering block text extraction, Zone 1 block generation, blacklist vetoes, declared asset dedupe, and wishlist boosting (38/38 unit tests pass).
+
 ## [2026-10-26] - 2026-10-26
 
 ### Verified & Audited

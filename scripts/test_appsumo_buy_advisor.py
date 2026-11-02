@@ -652,6 +652,88 @@ status: active
         self.assertFalse(rec)
         self.assertIn("核心主线", reason)
 
+    def test_cloud_doc_directives_integration(self):
+        from appsumo_buy_advisor import (
+            extract_notion_block_text,
+            build_human_directives_blocks,
+            DealAuditor,
+        )
+
+        # 1. Test block text extraction
+        sample_b = {
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [
+                    {"type": "text", "plain_text": "Hello "},
+                    {"type": "text", "plain_text": "Notion Cloud"},
+                ]
+            }
+        }
+        self.assertEqual(extract_notion_block_text(sample_b), "Hello Notion Cloud")
+
+        # 2. Test build human directives template
+        blocks = build_human_directives_blocks()
+        self.assertTrue(len(blocks) >= 5)
+        self.assertEqual(blocks[0]["type"], "callout")
+        self.assertEqual(blocks[1]["type"], "toggle")
+
+        # 3. Test Auditor with user directives (Blacklist, New Assets, Wishlist)
+        directives = {
+            "blacklist": ["bad-crm", "unwanted-tool"],
+            "new_assets": ["MyCustomTool"],
+            "wishlist": ["video-dubbing"],
+            "feedback": ["prior run was great"],
+            "raw_directives_found": True,
+        }
+        custom_auditor = DealAuditor(self.kb, user_directives=directives)
+
+        # 3A: Blacklist Veto test
+        blacklisted_deal = {
+            "name": "Bad CRM Pro",
+            "slug": "bad-crm",
+            "price": 49.0,
+            "original_price": 200.0,
+            "average_rating": 4.9,
+            "review_count": 50,
+            "category": "sales",
+            "card_description": "A very bad crm",
+        }
+        rec, reason, score = custom_auditor.audit_deal(blacklisted_deal)
+        self.assertFalse(rec)
+        self.assertIn("人工黑名单禁令", reason)
+
+        # 3B: Declared Owned Asset test
+        owned_custom_deal = {
+            "name": "MyCustomTool Suite",
+            "slug": "mycustomtool-suite",
+            "price": 39.0,
+            "original_price": 100.0,
+            "average_rating": 4.8,
+            "review_count": 40,
+            "category": "developer-tools",
+            "card_description": "My custom tool in action",
+        }
+        rec, reason, score = custom_auditor.audit_deal(owned_custom_deal)
+        self.assertFalse(rec)
+        self.assertIn("已拥有资产", reason)
+
+        # 3C: Wishlist Boost test
+        wishlist_deal = {
+            "name": "OmniDub AI",
+            "slug": "omnidub-ai",
+            "price": 49.0,
+            "original_price": 199.0,
+            "average_rating": 4.85,
+            "review_count": 60,
+            "category": "video",
+            "subcategory": "Video AI",
+            "card_description": "Native video dubbing and voice translation for international creators",
+        }
+        rec, reason, score = custom_auditor.audit_deal(wishlist_deal)
+        self.assertTrue(rec)
+        self.assertIn("关注意向", reason)
+        self.assertTrue(score > 70.0)
+
 
 if __name__ == "__main__":
     unittest.main()
