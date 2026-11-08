@@ -752,7 +752,7 @@ status: active
         self.assertFalse(rec_sched)
         self.assertIn("Zernio", reason_sched)
 
-        # An Instagram Comment-to-DM / ManyChat alternative (Inrō) that also tags Hootsuite must be RECOMMENDED
+        # An Instagram Comment-to-DM / ManyChat alternative (Inrō) is covered by Zernio Usage-Based /v1/comment-automations and must be REJECTED
         inro_deal = {
             "name": "Inrō",
             "slug": "inro",
@@ -766,10 +766,9 @@ status: active
             "card_description": "Automate Instagram DMs and comment replies with an AI agent that sounds like you and drives sales",
         }
         res_inro = self.auditor.audit_deal_steps(inro_deal)
-        self.assertTrue(res_inro["should_recommend"])
-        self.assertEqual(res_inro["verdict"], "RECOMMENDED")
-        self.assertIn("Comment-to-DM", res_inro["reason"])
-        self.assertGreaterEqual(res_inro["score"], 75.0)
+        self.assertFalse(res_inro["should_recommend"])
+        self.assertEqual(res_inro["verdict"], "REJECTED")
+        self.assertIn("Zernio", res_inro["reason"])
 
 
 if __name__ == "__main__":

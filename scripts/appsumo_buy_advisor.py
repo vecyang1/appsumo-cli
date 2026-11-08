@@ -37,21 +37,9 @@ DEFAULT_PURCHASES_MD = _resolve_tools_file("appsumo_purchases.md")
 DEFAULT_NOTION_PAGE_ID = "3f2e1b43-2393-815a-97e2-e06c9efcbfdc"
 CADENCE_ID = "CAD-20261007-appsumo-weekly-buy-advisor"
 
-# Primary competitor niches that represent a genuine capability gap NOT covered by generic social schedulers
-# (e.g., Zernio / AdaptlyPost handle social publishing & scheduling, NOT Instagram Comment-to-DM / Story-Reply / Conversational DM Funnel automation, where Zernio Inbox is paid-locked HTTP 403 INBOX_REQUIRED and AdaptlyPost Inbox is still 'In development').
-GAP_EXEMPT_COMPETITORS = {
-    "manychat": {
-        "niche_label": "Instagram Comment-to-DM / Story-Reply 互动私信漏斗与 AI 对话成交引擎",
-        "exempt_co_alternatives": {"hootsuite", "buffer", "later", "sprout social", "metricool", "ocoya", "predis"},
-        "exempt_subcategories": {"Social Media Management", "chatbots-ai-agents", "Chatbots"},
-        "existing_boundary_note": (
-            "现有 Zernio (4/120 上传配额，GET /v1/inbox/comments 返回 HTTP 403 INBOX_REQUIRED 需额外付费) "
-            "与 AdaptlyPost Tier 2 (50 账号无限排期，但 /inbox 仍处 In development 且无 Comment-to-DM 触发树) "
-            "仅覆盖「社媒内容排期与发布」，未覆盖「Instagram 评论关键词触发私信 (Comment-to-DM)、Story 回复触发、原生 MCP/API 私信漏斗编排」；"
-            "同时旧购 replient.ai 已过期未兑换 (expired)"
-        ),
-    }
-}
+# Primary competitor niches that represent a genuine capability gap NOT covered by generic owned tools
+# (Keep configurable; note that ManyChat / Comment-to-DM was live-verified on 2026-11-08 to be 100% covered for $0 by Zernio Usage-Based /v1/comment-automations + 10,000 free outbound DMs/mo).
+GAP_EXEMPT_COMPETITORS: Dict[str, Dict[str, Any]] = {}
 
 # Known mapping of competitor keywords ("alternative_to") to owned assets
 COMPETITOR_TO_OWNED_ASSET = {
@@ -113,6 +101,7 @@ COMPETITOR_TO_OWNED_ASSET = {
     "sprout social": "Late / Zernio",
     "ocoya": "Late / Zernio",
     "predis": "Late / Zernio",
+    "manychat": "Late / Zernio (Usage-Based 免费自带 /v1/comment-automations 评论转私信、Story 回复触发、Follow Gate 与 10,000 条/月免费私信)",
     # Email Marketing
     "mailchimp": "SendFox + Encharge (已拥有邮件自动化与受众细分)",
     "activecampaign": "Encharge + SendFox",
