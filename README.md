@@ -32,6 +32,7 @@ with no credentials configured and buyer credentials never reach a crawl.
 - `appsumo deals list`
 - `appsumo deals search <query>`
 - `appsumo deals ideal`
+- `appsumo deals explain <product-slug>` (5-step capability-gap procurement verdict & tier matrix)
 - `appsumo deals sync`
 - `appsumo deals diff`
 - `appsumo reviews <product-slug>`
