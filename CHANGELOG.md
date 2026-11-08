@@ -1,5 +1,17 @@
 # Changelog
 
+## [2026-11-08] - 2026-11-08
+
+### Added & Hardened
+- **Capability-Gap Differentiation (`GAP_EXEMPT_COMPETITORS`)**: Prevented false-negative rejections in `appsumo_buy_advisor.py` where Instagram Comment-to-DM / Story-Reply funnel tools (e.g., `Inrō`, primary `ManyChat` alternative) also list generic schedulers (`Hootsuite`) in secondary `alternative_to` tags while local schedulers (`Zernio`, `AdaptlyPost`) lack Comment-to-DM workflow automation.
+- **Live Scraped Archive Merge (`_merge_deal_sources`)**: Automatically merges SQLite catalog rows with freshly scraped `data/<slug>/deal.json` metadata so `appsumo deals explain <slug>` uses the freshest review counts and complete `plans` tier definitions.
+- **CLI Plan Matrix Observability**: Enhanced `explain_deal()` terminal trace to render the full **📊 套餐层级矩阵与选型对账** table across all tiers (39/39 unit tests pass).
+
+## [2026-11-07] - 2026-11-07
+
+### Maintenance
+- Auto-sanitize privacy files and local paths (`719534d`)
+
 ## [2026-11-02] - 2026-11-02
 
 ### Added

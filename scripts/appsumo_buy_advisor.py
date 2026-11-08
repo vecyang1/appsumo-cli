@@ -37,6 +37,22 @@ DEFAULT_PURCHASES_MD = _resolve_tools_file("appsumo_purchases.md")
 DEFAULT_NOTION_PAGE_ID = "3f2e1b43-2393-815a-97e2-e06c9efcbfdc"
 CADENCE_ID = "CAD-20261007-appsumo-weekly-buy-advisor"
 
+# Primary competitor niches that represent a genuine capability gap NOT covered by generic social schedulers
+# (e.g., Zernio / AdaptlyPost handle social publishing & scheduling, NOT Instagram Comment-to-DM / Story-Reply / Conversational DM Funnel automation, where Zernio Inbox is paid-locked HTTP 403 INBOX_REQUIRED and AdaptlyPost Inbox is still 'In development').
+GAP_EXEMPT_COMPETITORS = {
+    "manychat": {
+        "niche_label": "Instagram Comment-to-DM / Story-Reply 互动私信漏斗与 AI 对话成交引擎",
+        "exempt_co_alternatives": {"hootsuite", "buffer", "later", "sprout social", "metricool", "ocoya", "predis"},
+        "exempt_subcategories": {"Social Media Management", "chatbots-ai-agents", "Chatbots"},
+        "existing_boundary_note": (
+            "现有 Zernio (4/120 上传配额，GET /v1/inbox/comments 返回 HTTP 403 INBOX_REQUIRED 需额外付费) "
+            "与 AdaptlyPost Tier 2 (50 账号无限排期，但 /inbox 仍处 In development 且无 Comment-to-DM 触发树) "
+            "仅覆盖「社媒内容排期与发布」，未覆盖「Instagram 评论关键词触发私信 (Comment-to-DM)、Story 回复触发、原生 MCP/API 私信漏斗编排」；"
+            "同时旧购 replient.ai 已过期未兑换 (expired)"
+        ),
+    }
+}
+
 # Known mapping of competitor keywords ("alternative_to") to owned assets
 COMPETITOR_TO_OWNED_ASSET = {
     # Workflow, RPA & Integrations
@@ -527,10 +543,21 @@ class DealAuditor:
             "detail": "未在 65+ 款已购 SaaS 资产底册中直接命中",
         })
 
-        # Step 2: Competitor overlap
+        # Step 2: Competitor overlap (with Primary-Capability Gap Exemption check)
+        gap_exemption = None
+        for alt in alt_to:
+            for gap_key, gap_meta in GAP_EXEMPT_COMPETITORS.items():
+                if gap_key in alt:
+                    gap_exemption = gap_meta
+                    break
+            if gap_exemption:
+                break
+
         matched_comp = None
         comp_replacement = None
         for alt in alt_to:
+            if gap_exemption and any(ex in alt for ex in gap_exemption["exempt_co_alternatives"]):
+                continue
             for comp_key, owned_rep in COMPETITOR_TO_OWNED_ASSET.items():
                 if comp_key in alt:
                     matched_comp = alt
@@ -552,15 +579,33 @@ class DealAuditor:
                 f"与现有资产重叠: 宣称替代 {matched_comp.title()}，已被本地「{comp_replacement}」覆盖",
                 replacement=comp_replacement,
             )
-        steps.append({
-            "step": 2,
-            "rule_name": "Competitor Overlap (alternative_to)",
-            "status": "PASS",
-            "detail": "未命中既有轮子竞品替代词",
-        })
+        if gap_exemption:
+            steps.append({
+                "step": 2,
+                "rule_name": "Competitor Overlap (Primary Capability Gap Differentiation)",
+                "status": "PASS",
+                "detail": f"精准识别核心能力差: 定位为「{gap_exemption['niche_label']}」，豁免宽泛社媒排期标签误杀 ({gap_exemption['existing_boundary_note']})",
+            })
+        else:
+            steps.append({
+                "step": 2,
+                "rule_name": "Competitor Overlap (alternative_to)",
+                "status": "PASS",
+                "detail": "未命中既有轮子竞品替代词",
+            })
 
         # Step 3: Saturated Subcategory & Category
-        if subcategory in SATURATED_SUBCATEGORIES:
+        if gap_exemption and (
+            subcategory in gap_exemption["exempt_subcategories"]
+            or category in gap_exemption["exempt_subcategories"]
+        ):
+            steps.append({
+                "step": 3,
+                "rule_name": "Saturated Classification (Primary Capability Gap Exemption)",
+                "status": "PASS",
+                "detail": f"分类「{category} / {subcategory}」虽已有排期工具 (Zernio/AdaptlyPost)，但本品填补「{gap_exemption['niche_label']}」真实空白",
+            })
+        elif subcategory in SATURATED_SUBCATEGORIES:
             rep = SATURATED_SUBCATEGORIES[subcategory]
             steps.append({
                 "step": 3,
@@ -588,12 +633,13 @@ class DealAuditor:
                 f"所属分类「{category}」已被既有资产饱和覆盖: {rep}",
                 replacement=rep,
             )
-        steps.append({
-            "step": 3,
-            "rule_name": "Saturated Classification",
-            "status": "PASS",
-            "detail": f"分类「{category} / {subcategory}」尚未饱和",
-        })
+        else:
+            steps.append({
+                "step": 3,
+                "rule_name": "Saturated Classification",
+                "status": "PASS",
+                "detail": f"分类「{category} / {subcategory}」尚未饱和",
+            })
 
         # Step 4: Domain & Capability deduplication against specific owned tools
         text_to_check = re.sub(r"[-_]", " ", f"{name} {desc} {subcategory} {category}").lower()
@@ -897,10 +943,15 @@ class DealAuditor:
         })
 
         rec_reason = "通过资产对账与空白能力门禁，属于未拥有的高分软件候选"
+        if gap_exemption:
+            rec_reason = f"填补「{gap_exemption['niche_label']}」真实能力缺口 ({gap_exemption['existing_boundary_note']})"
         if matched_wish:
             rec_reason = f"🎯 契合云端协同关注意向「{matched_wish}」，并通过空白能力门禁的高分软件候选"
 
-        return _verdict(True, "Rule 8 (空白能力候选通过)", rec_reason, score=score)
+        res_dict = _verdict(True, "Rule 8 (空白能力候选通过)", rec_reason, score=score)
+        if d_plans := deal.get("plans"):
+            res_dict["deal"]["plans"] = d_plans
+        return res_dict
 
     def audit_deal(self, deal: Dict[str, Any]) -> Tuple[bool, str, float]:
         res = self.audit_deal_steps(deal)
@@ -1034,13 +1085,32 @@ def _normalize_scraped_deal(d: Dict[str, Any], slug: str) -> Dict[str, Any]:
         "alternative_to": alt_to,
         "best_for": best_for,
         "integrations": integrations,
+        "plans": plans,
+        "common_features": d.get("common_features") or [],
+        "default_plan_terms": d.get("default_plan_terms") or [],
     }
+
+
+def _merge_deal_sources(primary: Dict[str, Any], secondary: Dict[str, Any]) -> Dict[str, Any]:
+    """Merges two normalized deal dicts, taking higher review_count and preserving rich plans/taxonomy."""
+    merged = dict(primary)
+    for k, v in secondary.items():
+        if v is None or v == "" or v == [] or v == {}:
+            continue
+        if k == "review_count":
+            merged[k] = max(int(merged.get(k) or 0), int(v or 0))
+        elif k == "average_rating" and merged.get(k) is None:
+            merged[k] = v
+        elif not merged.get(k):
+            merged[k] = v
+    return merged
 
 
 def fetch_deal_by_slug(slug_or_url: str, bin_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Resolves deal metadata by slug from local SQLite, data files, CLI query, or live API."""
     slug = clean_product_slug(slug_or_url)
     repo_root = Path(__file__).resolve().parent.parent
+    resolved: Optional[Dict[str, Any]] = None
 
     # 1. Query local SQLite database (authoritative catalog snapshot)
     db_candidates = [
@@ -1063,19 +1133,24 @@ def fetch_deal_by_slug(slug_or_url: str, bin_path: Optional[str] = None) -> Opti
                 )
                 row = cursor.fetchone()
                 if row:
-                    return _normalize_scraped_deal(dict(row), slug)
+                    resolved = _normalize_scraped_deal(dict(row), slug)
+                    break
             except Exception:
                 pass
 
-    # 2. Local scraped data folder (data/<slug>/deal.json)
+    # 2. Local scraped data folder (data/<slug>/deal.json) — merge for fresh review counts & full tier plans
     deal_json_path = repo_root / "data" / slug / "deal.json"
     if deal_json_path.exists():
         try:
             data = json.loads(deal_json_path.read_text(encoding="utf-8"))
             if data:
-                return _normalize_scraped_deal(data, slug)
+                scraped_norm = _normalize_scraped_deal(data, slug)
+                resolved = _merge_deal_sources(resolved, scraped_norm) if resolved else scraped_norm
         except Exception:
             pass
+
+    if resolved:
+        return resolved
 
     # 3. Query via appsumo deals list --query <slug>
     bin_path = bin_path or resolve_binary()
@@ -1181,6 +1256,24 @@ def explain_deal(
     ])
     if audit_result.get("replacement"):
         lines.append(f"🛡️ 既有资产替代: {audit_result['replacement']}")
+
+    plans = d.get("plans") or []
+    if plans and isinstance(plans, list):
+        lines.extend(["", "📊 套餐层级矩阵与选型对账 (License Tiers & Plan Matrix):"])
+        for p in plans:
+            if not isinstance(p, dict):
+                continue
+            tier_num = p.get("tier")
+            p_price = p.get("price")
+            p_orig = p.get("original_price")
+            feats = []
+            for pf in p.get("plan_features") or []:
+                f_str = pf.get("feature") if isinstance(pf, dict) else str(pf)
+                if f_str and f_str.strip():
+                    clean_f = re.sub(r"<[^>]+>", "", f_str).strip()
+                    feats.append(clean_f)
+            lines.append(f"  • Tier {tier_num}: ${p_price} (原价 ${p_orig}) -> {' | '.join(feats[:6])}")
+
     lines.append("=" * 70)
 
     print("\n".join(lines))

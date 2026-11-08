@@ -734,6 +734,43 @@ status: active
         self.assertIn("关注意向", reason)
         self.assertTrue(score > 70.0)
 
+    def test_manychat_primary_capability_gap_exemption(self):
+        # A pure social scheduler (SocialBu) with alternative_to=["Hootsuite", "Buffer"] must still be REJECTED
+        scheduler_deal = {
+            "name": "SocialBu",
+            "slug": "socialbu",
+            "price": 49.0,
+            "original_price": 400.0,
+            "average_rating": 4.64,
+            "review_count": 50,
+            "category": "social-media",
+            "subcategory": "Social Media Management",
+            "alternative_to": ["Buffer", "Hootsuite"],
+            "card_description": "Schedule, publish, analyze, and grow social media presence across 12+ platforms",
+        }
+        rec_sched, reason_sched, _ = self.auditor.audit_deal(scheduler_deal)
+        self.assertFalse(rec_sched)
+        self.assertIn("Zernio", reason_sched)
+
+        # An Instagram Comment-to-DM / ManyChat alternative (Inrō) that also tags Hootsuite must be RECOMMENDED
+        inro_deal = {
+            "name": "Inrō",
+            "slug": "inro",
+            "price": 59.0,
+            "original_price": 708.0,
+            "average_rating": 5.0,
+            "review_count": 36,
+            "category": "social-media",
+            "subcategory": "Social Media Management",
+            "alternative_to": ["Hootsuite", "ManyChat"],
+            "card_description": "Automate Instagram DMs and comment replies with an AI agent that sounds like you and drives sales",
+        }
+        res_inro = self.auditor.audit_deal_steps(inro_deal)
+        self.assertTrue(res_inro["should_recommend"])
+        self.assertEqual(res_inro["verdict"], "RECOMMENDED")
+        self.assertIn("Comment-to-DM", res_inro["reason"])
+        self.assertGreaterEqual(res_inro["score"], 75.0)
+
 
 if __name__ == "__main__":
     unittest.main()
