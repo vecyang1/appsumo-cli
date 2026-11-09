@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-11-09] - 2026-11-09
+
+### Added & Hardened
+- **Weekly Cadence Run (2026-W45)**: Successfully executed full-catalog buy advisor cadence across 540/540 deals (100% complete pagination, zero truncation, 1 request batch) against 69 owned assets in `appsumo_purchased_assets.md` + Cloud Notion declared directives.
+- **AI Video & Multi-Model Reseller Deduplication**: Hardened `COMPETITOR_TO_OWNED_ASSET` mappings for `kapwing`, `freepik`, and `higgsfield` (mapped to native workspace tools `seedance-video-generator`, `flow2api`, `piapi-video-generator`, `beeftv`, and local design/video toolchain). Intercepted token reseller `MagicCanvas` to protect attention and budget.
+- **Bi-directional Cloud Notion Sync & Non-Destructive Archiving**: Preserved Zone 1 Human Directives (Wishlist, Blacklist veto for Memogram, Newly Acquired, Feedback), archived prior recommendations into Zone 3 Historical Archive, and refreshed Zone 2 with verified blank-capability recommendations (`WP Reset Pro Plan` and `Internal Linking of Related Contents`).
+- **Regression Test Coverage**: Added `test_ai_video_competitor_rejected` to `scripts/test_appsumo_buy_advisor.py` (40/40 tests pass in 0.051s).
+
 ## [2026-11-08] - 2026-11-08
 
 ### Added & Hardened

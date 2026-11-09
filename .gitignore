@@ -32,6 +32,7 @@ task_plan.md
 handoff.md
 graphify-out/
 .run/
+CADENCE_LOG.md
 __pycache__/
 *.pyc
 

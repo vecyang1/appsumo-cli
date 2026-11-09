@@ -770,6 +770,25 @@ status: active
         self.assertEqual(res_inro["verdict"], "REJECTED")
         self.assertIn("Zernio", res_inro["reason"])
 
+    def test_ai_video_competitor_rejected(self):
+        # MagicCanvas claiming alternative to Higgsfield, Kapwing, Freepik
+        magiccanvas_deal = {
+            "name": "MagicCanvas",
+            "slug": "magiccanvas",
+            "price": 59.0,
+            "original_price": 199.0,
+            "average_rating": 4.7,
+            "review_count": 10,
+            "category": "video",
+            "subcategory": "AI Video",
+            "alternative_to": ["Higgsfield", "Kapwing", "Freepik"],
+            "card_description": "Tap into Google Veo, Seedance, Wan, and more with this all-in-one AI video and image generator",
+        }
+        res = self.auditor.audit_deal_steps(magiccanvas_deal)
+        self.assertFalse(res["should_recommend"])
+        self.assertEqual(res["verdict"], "REJECTED")
+        self.assertIn("seedance-video-generator", res["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

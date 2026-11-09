@@ -139,6 +139,9 @@ COMPETITOR_TO_OWNED_ASSET = {
     "descript": "Xound + Minvo (已拥有 AI 剪辑与去噪套件)",
     "speechelo": "ElevenLabs + EaseUS VoiceWave (本地权威 TTS 技能)",
     "powtoon": "Remotion + Manim + Kling/Seedance (本地编程式与 AI 视频套件)",
+    "kapwing": "本地 Remotion + NewType-Cut + VideoCut + Kling/Seedance/Flow2API 本地视频智能体套件",
+    "freepik": "本地 Figma + SVG Generator + WeShop AI + Seedream 4.5",
+    "higgsfield": "本地 seedance-video-generator + piapi-video-generator + flow2api 原生 API",
     # Flipbooks, Readers & Documents
     "issuu": "FlipBooklets (已拥有终身版交互式 3D 翻页书与全白标 Edge Gateway)",
     "flipsnack": "FlipBooklets (已拥有终身版交互式 3D 翻页书)",
