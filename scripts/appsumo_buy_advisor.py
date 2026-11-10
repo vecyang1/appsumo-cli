@@ -2047,11 +2047,14 @@ def notify_slack_summary(
     notion_page_id: str,
     channel: Optional[str] = None,
     token: Optional[str] = None,
-) -> bool:
+    existing_ts: Optional[str] = None,
+) -> Optional[str]:
     """
-    Sends a concise executive digest of the AppSumo Buy Advisor run to Slack.
+    Sends or updates a concise executive digest of the AppSumo Buy Advisor run in Slack.
     Default channel: C091GLVKLJU (#headquarters) or SLACK_CHANNEL env var.
     Uses token from SLACK_BOT_TOKEN, SLACK_TOKEN, or ~/.slack/credentials.json.
+    If existing_ts is provided, updates the message via chat.update to prevent spam.
+    Returns the message ts on success, or None on failure/skip.
     """
     import urllib.request
 
@@ -2066,12 +2069,12 @@ def notify_slack_summary(
             except Exception:
                 pass
     if not slack_token or not target_channel:
-        return False
+        return None
 
     recommended = result.get("recommended", [])
     audited = result.get("audited_count", 0)
     owned = result.get("owned_assets_indexed", 0)
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     blocks = [
         {
@@ -2128,15 +2131,18 @@ def notify_slack_summary(
         ],
     })
 
+    method = "chat.update" if existing_ts else "chat.postMessage"
     payload = {
         "channel": target_channel,
         "text": f"⭐️ AppSumo 每周采购推荐: 审计 {audited} 款，发现 {len(recommended)} 款推荐候选",
         "blocks": blocks,
     }
+    if existing_ts:
+        payload["ts"] = existing_ts
 
     try:
         req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage",
+            f"https://slack.com/api/{method}",
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {slack_token}",
@@ -2146,13 +2152,22 @@ def notify_slack_summary(
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("ok"):
-                return True
+                return data.get("ts") or existing_ts
+            elif existing_ts and data.get("error") in ("message_not_found", "cant_update_message"):
+                # Fallback to posting a new message if original message was deleted
+                return notify_slack_summary(
+                    result,
+                    notion_page_id=notion_page_id,
+                    channel=channel,
+                    token=token,
+                    existing_ts=None,
+                )
             else:
                 print(f"Notice: Slack notification error: {data.get('error')}", file=sys.stderr)
-                return False
+                return None
     except Exception as e:
         print(f"Notice: Slack notification failed (gracefully skipped): {e}", file=sys.stderr)
-        return False
+        return None
 
 
 def run_advisor(
@@ -2173,9 +2188,20 @@ def run_advisor(
     receipts_dir = state_dir / "receipts"
     receipts_dir.mkdir(parents=True, exist_ok=True)
 
-    today_str = datetime.date.today().isoformat()
-    week_str = datetime.date.today().strftime("%Y-W%W")
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    today_str = today.isoformat()
+    iso_year, iso_week, _ = today.isocalendar()
+    week_str = f"{iso_year}-W{iso_week:02d}"
     success_marker = state_dir / f"{week_str}.success"
+
+    existing_slack_ts = None
+    if state_file.exists():
+        try:
+            prev_state = json.loads(state_file.read_text(encoding="utf-8"))
+            if prev_state.get("week_key") == week_str:
+                existing_slack_ts = prev_state.get("slack_ts")
+        except Exception:
+            pass
 
     if success_marker.exists() and not force and not dry_run:
         return {
@@ -2328,24 +2354,6 @@ def run_advisor(
 
         receipt_path.write_text("\n".join(receipt_md), encoding="utf-8")
 
-        # Write state.json
-        state_data = {
-            "cadence_id": CADENCE_ID,
-            "last_run_at": datetime.datetime.now().isoformat(),
-            "last_status": result["status"],
-            "audited_count": len(deals),
-            "declared_total": declared_total,
-            "complete_pagination": pagination_complete,
-            "requests_count": requests_count,
-            "recommended_count": len(recommended),
-            "cloud_directives_found": directives.get("raw_directives_found", False),
-            "receipt_path": str(receipt_path),
-        }
-        state_file.write_text(json.dumps(state_data, indent=2), encoding="utf-8")
-
-        # Write success marker
-        success_marker.write_text(f"PASS {datetime.datetime.now().isoformat()}\n", encoding="utf-8")
-
         # Push to Notion if page ID provided
         if notion_page_id:
             blocks = build_notion_blocks(len(deals), recommended, rejections, fetch_info=fetch_info, directives=directives)
@@ -2356,8 +2364,37 @@ def run_advisor(
                 directives=directives,
                 token=token,
             )
-            if notify_slack and not dry_run:
-                notify_slack_summary(result, notion_page_id=notion_page_id)
+
+        # Notify Slack executive channel (update existing if same week, else post new)
+        slack_delivery_ts = None
+        if notify_slack and not dry_run and notion_page_id:
+            slack_delivery_ts = notify_slack_summary(
+                result,
+                notion_page_id=notion_page_id,
+                existing_ts=existing_slack_ts,
+            )
+
+        # Write state.json with ISO 8601 UTC timestamp and delivery receipts
+        now_utc_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        state_data = {
+            "cadence_id": CADENCE_ID,
+            "week_key": week_str,
+            "last_run_at": now_utc_str,
+            "last_status": result["status"],
+            "audited_count": len(deals),
+            "declared_total": declared_total,
+            "complete_pagination": pagination_complete,
+            "requests_count": requests_count,
+            "recommended_count": len(recommended),
+            "cloud_directives_found": directives.get("raw_directives_found", False),
+            "receipt_path": str(receipt_path),
+            "slack_ts": slack_delivery_ts or existing_slack_ts,
+            "slack_delivered": bool(slack_delivery_ts or existing_slack_ts),
+        }
+        state_file.write_text(json.dumps(state_data, indent=2), encoding="utf-8")
+
+        # Write success marker ONLY after deliveries complete
+        success_marker.write_text(f"PASS {now_utc_str}\n", encoding="utf-8")
 
     return result
 

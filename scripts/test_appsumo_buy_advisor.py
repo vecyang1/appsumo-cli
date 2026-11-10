@@ -793,20 +793,20 @@ status: active
 
 
 class TestSlackNotification(unittest.TestCase):
-    def test_missing_token_returns_false_gracefully(self):
+    def test_missing_token_returns_none_gracefully(self):
         result = {
             "audited_count": 540,
             "owned_assets_indexed": 69,
             "recommended": [],
         }
         with mock.patch("pathlib.Path.exists", return_value=False):
-            ok = notify_slack_summary(
+            ts = notify_slack_summary(
                 result,
                 notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
                 channel="fake_channel",
                 token="",
             )
-            self.assertFalse(ok)
+            self.assertIsNone(ts)
 
     @mock.patch("urllib.request.urlopen")
     def test_successful_slack_notification(self, mock_urlopen):
@@ -831,14 +831,82 @@ class TestSlackNotification(unittest.TestCase):
                 }
             ],
         }
-        ok = notify_slack_summary(
+        ts = notify_slack_summary(
             result,
             notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
             channel="C091GLVKLJU",
             token="xoxp-fake-token",
         )
-        self.assertTrue(ok)
+        self.assertEqual(ts, "1234567890.123456")
         self.assertTrue(mock_urlopen.called)
+        req = mock_urlopen.call_args[0][0]
+        self.assertIn("chat.postMessage", req.full_url)
+
+    @mock.patch("urllib.request.urlopen")
+    def test_slack_notification_updates_existing_message(self, mock_urlopen):
+        class FakeResponse:
+            def read(self):
+                return b'{"ok": true, "ts": "1111111111.222222"}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        mock_urlopen.return_value = FakeResponse()
+        result = {
+            "audited_count": 550,
+            "owned_assets_indexed": 69,
+            "recommended": [],
+        }
+        ts = notify_slack_summary(
+            result,
+            notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
+            channel="C091GLVKLJU",
+            token="xoxp-fake-token",
+            existing_ts="1111111111.222222",
+        )
+        self.assertEqual(ts, "1111111111.222222")
+        self.assertTrue(mock_urlopen.called)
+        req = mock_urlopen.call_args[0][0]
+        self.assertIn("chat.update", req.full_url)
+        body = json.loads(req.data.decode("utf-8"))
+        self.assertEqual(body.get("ts"), "1111111111.222222")
+
+    @mock.patch("urllib.request.urlopen")
+    def test_slack_notification_fallback_if_message_deleted(self, mock_urlopen):
+        # First call fails with message_not_found, second call succeeds as postMessage
+        call_count = 0
+        def fake_urlopen(req, timeout=10):
+            nonlocal call_count
+            call_count += 1
+            class FakeResp:
+                def __init__(self, count):
+                    self.count = count
+                def read(self):
+                    if self.count == 1:
+                        return b'{"ok": false, "error": "message_not_found"}'
+                    return b'{"ok": true, "ts": "9999999999.888888"}'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return FakeResp(call_count)
+
+        mock_urlopen.side_effect = fake_urlopen
+        result = {
+            "audited_count": 550,
+            "owned_assets_indexed": 69,
+            "recommended": [],
+        }
+        ts = notify_slack_summary(
+            result,
+            notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
+            channel="C091GLVKLJU",
+            token="xoxp-fake-token",
+            existing_ts="deleted_ts_123",
+        )
+        self.assertEqual(ts, "9999999999.888888")
+        self.assertEqual(call_count, 2)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,13 @@
 
 ### Added & Hardened
 - **Automated Slack Executive Notification (`notify_slack_summary`)**: Integrated instant Slack executive digest notification upon weekly run completion to channel `#headquarters` (`C091GLVKLJU`), delivering audited count, deduplication against 69 owned assets, recommended deals with pricing/reasons, and a direct link to the living Notion Hub. Prevents silent background execution and resolves human feedback loop lag.
+- **Claude Code Cross-Critic Hardening**:
+  - **ISO 8601 Week Key Consistency (`isocalendar`)**: Migrated weekly marker calculation in both `run_appsumo_buy_advisor.sh` (`date -u +%G-W%V`) and `appsumo_buy_advisor.py` (`datetime.datetime.now(datetime.timezone.utc).isocalendar()`) to canonical ISO 8601, preventing cross-year week drift (`W52`/`W00`).
+  - **Strict Delivery Precedence Before Success Marker**: Moved Notion and Slack notifications prior to atomic write of `state.json` and `<week_key>.success`, ensuring external delivery failures never result in silent phantom completion.
+  - **Idempotent Slack Update (`chat.update`)**: Recorded `slack_ts` in `state.json` and implemented idempotent `chat.update` on reruns within the same ISO week, with automatic fallback to `chat.postMessage` if the original message was deleted.
+  - **Explicit UTC Timestamps**: Standardized all runtime timestamps in Slack blocks and state persistence to explicit UTC format (`%Y-%m-%d %H:%M UTC` / ISO 8601).
 - **CLI Control Flag (`--no-slack`)**: Added `--no-slack` CLI flag to bypass Slack message dispatch when running in offline or local diagnostic environments.
-- **Unit Test Coverage**: Added `TestSlackNotification` in `scripts/test_appsumo_buy_advisor.py` covering token fallback and mocked Slack API dispatch (42/42 tests pass).
+- **Unit Test Coverage**: Expanded `TestSlackNotification` in `scripts/test_appsumo_buy_advisor.py` covering token fallback, postMessage, chat.update, and deletion fallback (44/44 tests pass).
 
 ## [2026-11-09] - 2026-11-09
 

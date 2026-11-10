@@ -25,7 +25,7 @@ if [ -z "${http_proxy:-}" ] && [ -z "${HTTP_PROXY:-}" ]; then
 fi
 
 # 1. Incremental Skip Gate: check if weekly task already completed
-WEEK_MARKER="$REPO_ROOT/.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/$(date +%Y-W%W).success"
+WEEK_MARKER="$REPO_ROOT/.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/$(date -u +%G-W%V).success"
 FORCE=false
 DRY_RUN=false
 for arg in "$@"; do
