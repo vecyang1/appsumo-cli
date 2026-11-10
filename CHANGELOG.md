@@ -1,5 +1,12 @@
 # Changelog
 
+## [2026-11-10] - 2026-11-10
+
+### Added & Hardened
+- **Automated Slack Executive Notification (`notify_slack_summary`)**: Integrated instant Slack executive digest notification upon weekly run completion to channel `#headquarters` (`C091GLVKLJU`), delivering audited count, deduplication against 69 owned assets, recommended deals with pricing/reasons, and a direct link to the living Notion Hub. Prevents silent background execution and resolves human feedback loop lag.
+- **CLI Control Flag (`--no-slack`)**: Added `--no-slack` CLI flag to bypass Slack message dispatch when running in offline or local diagnostic environments.
+- **Unit Test Coverage**: Added `TestSlackNotification` in `scripts/test_appsumo_buy_advisor.py` covering token fallback and mocked Slack API dispatch (42/42 tests pass).
+
 ## [2026-11-09] - 2026-11-09
 
 ### Added & Hardened
