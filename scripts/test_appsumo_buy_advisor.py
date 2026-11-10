@@ -4,6 +4,7 @@ Unit tests for AppSumo Buy Advisor & Asset-Aware Recommender
 """
 
 import unittest
+from unittest import mock
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 import json
@@ -21,6 +22,7 @@ from appsumo_buy_advisor import (
     clean_product_slug,
     explain_deal,
     fetch_candidate_deals,
+    notify_slack_summary,
 )
 
 SAMPLE_ASSETS_MD = """---
@@ -788,6 +790,55 @@ status: active
         self.assertFalse(res["should_recommend"])
         self.assertEqual(res["verdict"], "REJECTED")
         self.assertIn("seedance-video-generator", res["reason"])
+
+
+class TestSlackNotification(unittest.TestCase):
+    def test_missing_token_returns_false_gracefully(self):
+        result = {
+            "audited_count": 540,
+            "owned_assets_indexed": 69,
+            "recommended": [],
+        }
+        with mock.patch("pathlib.Path.exists", return_value=False):
+            ok = notify_slack_summary(
+                result,
+                notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
+                channel="fake_channel",
+                token="",
+            )
+            self.assertFalse(ok)
+
+    @mock.patch("urllib.request.urlopen")
+    def test_successful_slack_notification(self, mock_urlopen):
+        class FakeResponse:
+            def read(self):
+                return b'{"ok": true, "ts": "1234567890.123456"}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        mock_urlopen.return_value = FakeResponse()
+        result = {
+            "audited_count": 540,
+            "owned_assets_indexed": 69,
+            "recommended": [
+                {
+                    "name": "WP Reset Pro",
+                    "price": 49.0,
+                    "url": "https://appsumo.com/products/wp-reset/",
+                    "reason": "WordPress 应急与恢复工具",
+                }
+            ],
+        }
+        ok = notify_slack_summary(
+            result,
+            notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
+            channel="C091GLVKLJU",
+            token="xoxp-fake-token",
+        )
+        self.assertTrue(ok)
+        self.assertTrue(mock_urlopen.called)
 
 
 if __name__ == "__main__":

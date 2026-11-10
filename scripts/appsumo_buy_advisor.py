@@ -2042,6 +2042,119 @@ def build_notion_blocks(
     return blocks
 
 
+def notify_slack_summary(
+    result: Dict[str, Any],
+    notion_page_id: str,
+    channel: Optional[str] = None,
+    token: Optional[str] = None,
+) -> bool:
+    """
+    Sends a concise executive digest of the AppSumo Buy Advisor run to Slack.
+    Default channel: C091GLVKLJU (#headquarters) or SLACK_CHANNEL env var.
+    Uses token from SLACK_BOT_TOKEN, SLACK_TOKEN, or ~/.slack/credentials.json.
+    """
+    import urllib.request
+
+    target_channel = channel or os.environ.get("SLACK_CHANNEL", "C091GLVKLJU")
+    slack_token = token or os.environ.get("SLACK_BOT_TOKEN") or os.environ.get("SLACK_TOKEN")
+    if not slack_token:
+        slack_creds_path = Path.home() / ".slack" / "credentials.json"
+        if slack_creds_path.exists():
+            try:
+                creds = json.loads(slack_creds_path.read_text(encoding="utf-8"))
+                slack_token = creds.get("T05C2FLHA2J", {}).get("token")
+            except Exception:
+                pass
+    if not slack_token or not target_channel:
+        return False
+
+    recommended = result.get("recommended", [])
+    audited = result.get("audited_count", 0)
+    owned = result.get("owned_assets_indexed", 0)
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "⭐️ AppSumo 每周资产对账与采购推荐报告",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*巡检时间*: `{now_str}`\n"
+                    f"*全量对账*: 审计 *{audited}* 款 Deals · 对比 *{owned}* 款已购资产\n"
+                    f"*决策结论*: "
+                    + (
+                        f"🎯 发现 *{len(recommended)}* 款填补空白能力候选"
+                        if recommended
+                        else "🛡️ 全量 Deals 与既有轮子重叠，本周建议 *0 采购*"
+                    )
+                ),
+            },
+        },
+    ]
+
+    if recommended:
+        fields = []
+        for r in recommended[:5]:
+            fields.append({
+                "type": "mrkdwn",
+                "text": f"• <{r['url']}|*{r['name']}*> (${r.get('price', '—')})\n  _{r.get('reason', '')}_",
+            })
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*推荐产品清单*:"},
+        })
+        for f in fields:
+            blocks.append({
+                "type": "section",
+                "text": f,
+            })
+
+    clean_notion_id = notion_page_id.replace("-", "")
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": f"📖 <https://app.notion.com/p/cadence-AppSumo-{clean_notion_id}|打开 Notion 协同决策中枢> · 节律代号: `CAD-20261007-appsumo-weekly-buy-advisor`",
+            }
+        ],
+    })
+
+    payload = {
+        "channel": target_channel,
+        "text": f"⭐️ AppSumo 每周采购推荐: 审计 {audited} 款，发现 {len(recommended)} 款推荐候选",
+        "blocks": blocks,
+    }
+
+    try:
+        req = urllib.request.Request(
+            "https://slack.com/api/chat.postMessage",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {slack_token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("ok"):
+                return True
+            else:
+                print(f"Notice: Slack notification error: {data.get('error')}", file=sys.stderr)
+                return False
+    except Exception as e:
+        print(f"Notice: Slack notification failed (gracefully skipped): {e}", file=sys.stderr)
+        return False
+
+
 def run_advisor(
     assets_file: Path = DEFAULT_ASSETS_MD,
     notion_page_id: str = DEFAULT_NOTION_PAGE_ID,
@@ -2050,6 +2163,7 @@ def run_advisor(
     dry_run: bool = False,
     as_json: bool = False,
     force: bool = False,
+    notify_slack: bool = True,
 ) -> Dict[str, Any]:
     """Main entrypoint for running the buy advisor."""
     # 1. State / Skip Check
@@ -2242,6 +2356,8 @@ def run_advisor(
                 directives=directives,
                 token=token,
             )
+            if notify_slack and not dry_run:
+                notify_slack_summary(result, notion_page_id=notion_page_id)
 
     return result
 
@@ -2268,6 +2384,7 @@ def main():
     parser.add_argument("--limit", type=int, default=0, help="Number of deals to audit (0 fetches all, default: 0)")
     parser.add_argument("--scan-mode", default="all_catalog", choices=["all_catalog", "ideal"], help="Scan mode: all_catalog (default) or ideal")
     parser.add_argument("--dry-run", action="store_true", help="Audit without saving state or pushing Notion")
+    parser.add_argument("--no-slack", action="store_true", help="Skip sending Slack summary notification")
     parser.add_argument("--force", action="store_true", help="Bypass weekly success marker")
     parser.add_argument("--json", action="store_true", help="Emit raw JSON")
 
@@ -2289,6 +2406,7 @@ def main():
         dry_run=args.dry_run,
         as_json=args.json,
         force=args.force,
+        notify_slack=not args.no_slack,
     )
 
     if args.json:
