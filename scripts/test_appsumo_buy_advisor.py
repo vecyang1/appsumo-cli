@@ -327,6 +327,21 @@ class TestAppSumoBuyAdvisor(unittest.TestCase):
         self.assertFalse(rec)
         self.assertTrue("3D" in reason or "全景看房" in reason or "非核心业务" in reason or "Photo Editing" in reason)
 
+    def test_wordpress_internal_linking_plugin_rejected(self):
+        deal = {
+            "name": "Internal Linking of Related Contents",
+            "slug": "marketplace-internal-linking-related-contents",
+            "average_rating": 4.84,
+            "review_count": 25,
+            "price": 59,
+            "category": "website-builders-wordpress",
+            "subcategory": "wordpress",
+            "card_description": "Automatically link related posts to boost SEO and engage users with relevant content in WordPress Gutenberg and WooCommerce.",
+        }
+        rec, reason, score = self.auditor.audit_deal(deal)
+        self.assertFalse(rec)
+        self.assertTrue("BuildFast" in reason or "架构不匹配" in reason or "Notion" in reason)
+
     def test_build_notion_blocks_no_recommendations(self):
         blocks = build_notion_blocks(audited_count=35, recommended=[], rejections=[])
         self.assertGreater(len(blocks), 1)

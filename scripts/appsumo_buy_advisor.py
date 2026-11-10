@@ -148,6 +148,10 @@ COMPETITOR_TO_OWNED_ASSET = {
     "zendesk": "CX Genie",
     "livechat": "CX Genie",
     "crisp": "CX Genie",
+    # WordPress Internal Linking & Related Posts (Architectural Mismatch: Production Blogs on BuildFast / Next.js SSG)
+    "link whisper": "BuildFast + Notion SSOT + 本地 seo-copilot (生产博客已全量由 BuildFast/Next.js 承载，WP Post 已全量下架)",
+    "internal link juicer": "BuildFast + Notion SSOT + 本地 seo-copilot",
+    "linkstorm": "BuildFast + Notion SSOT + 本地 seo-copilot",
     # SEO & Indexing
     "yoast": "Squirrly SEO + Cromojo (已拥有 AI SEO 终身版与自动收录)",
     "rank math": "Squirrly SEO",
@@ -674,6 +678,19 @@ class DealAuditor:
             rep = "ShopEngine Plus Exclusive (已拥有 WooCommerce 全套构建器)"
             steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "WooCommerce 构建器: " + rep})
             return _verdict(False, "Rule 4 (垂直领域与能力去重)", "WooCommerce 电商模版与构建器: 已拥有「ShopEngine Plus Exclusive」终身资产，无需重复购置", replacement=rep)
+
+        # WordPress blog post internal linking & related content plugins (Architectural mismatch: blogs are BuildFast / Next.js SSG, WP posts drafted)
+        if ("internal link" in text_to_check or "related content" in text_to_check or "related post" in text_to_check) and (
+            "wordpress" in text_to_check or "wp" in text_to_check or "gutenberg" in text_to_check or "plugin" in text_to_check
+        ):
+            rep = "BuildFast + Notion SSOT + 本地 seo-copilot (所有生产博客已全量迁移至 BuildFast/Next.js，WP 原生 Post 已全量下架归档)"
+            steps.append({"step": 4, "rule_name": "Domain Capability", "status": "HIT", "detail": "WordPress 博客文章内链与推荐插件 (架构不匹配): " + rep})
+            return _verdict(
+                False,
+                "Rule 4 (垂直领域与能力去重)",
+                "WordPress 博客文章内链与推荐插件: 生产博客 (worldinspirelab, glintmuse, carradiocodes, xinchaovi, globalgrowthco) 已全量由 Notion + BuildFast (Next.js SSG) 承载，WordPress 原生文章已全量归档下架；WP 插件无法运行于 BuildFast/Next.js 边缘架构，存在根本架构不匹配",
+                replacement=rep,
+            )
 
         # Client portal / file transfer
         if "client management" in subcategory.lower() or "file transfer" in text_to_check or "client portal" in text_to_check:
