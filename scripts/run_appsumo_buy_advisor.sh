@@ -24,8 +24,9 @@ if [ -z "${http_proxy:-}" ] && [ -z "${HTTP_PROXY:-}" ]; then
   done
 fi
 
-# 1. Incremental Skip Gate: check if weekly task already completed
+# 1. Incremental Skip Gate: check if weekly task already completed (ISO 8601 with legacy format fallback)
 WEEK_MARKER="$REPO_ROOT/.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/$(date -u +%G-W%V).success"
+LEGACY_MARKER="$REPO_ROOT/.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/$(date -u +%Y-W%W).success"
 FORCE=false
 DRY_RUN=false
 for arg in "$@"; do
@@ -36,8 +37,8 @@ for arg in "$@"; do
   fi
 done
 
-if [ -f "$WEEK_MARKER" ] && [ "$FORCE" = "false" ] && [ "$DRY_RUN" = "false" ]; then
-  echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Weekly success marker $(basename "$WEEK_MARKER") present: skipping redundant network sync ==="
+if ([ -f "$WEEK_MARKER" ] || [ -f "$LEGACY_MARKER" ]) && [ "$FORCE" = "false" ] && [ "$DRY_RUN" = "false" ]; then
+  echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Weekly success marker present: skipping redundant network sync ==="
   python3 "$REPO_ROOT/scripts/appsumo_buy_advisor.py" "$@"
   echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] AppSumo Weekly Buy Advisor Cadence Gracefully Skipped ==="
   exit 0

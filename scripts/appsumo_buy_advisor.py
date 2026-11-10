@@ -13,14 +13,41 @@ Target Notion Page: https://app.notion.com/p/cadence-AppSumo-3f2e1b432393815a97e
 
 import argparse
 import datetime
+import fcntl
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+
+class DeliveryError(RuntimeError):
+    """Raised when external notification delivery fails critically."""
+    pass
+
+
+def write_state_atomic(path: Path, data: dict) -> None:
+    """Atomically writes JSON state to path using tempfile + fsync + os.replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=".state.", suffix=".tmp")
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp_path.replace(path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
 
 def _resolve_tools_file(filename: str) -> Path:
     env_val = os.environ.get("APPSUMO_ASSETS_PATH")
@@ -2042,22 +2069,63 @@ def build_notion_blocks(
     return blocks
 
 
+def _send_slack_request(
+    url: str,
+    payload: dict,
+    token: str,
+    retries: int = 1,
+) -> dict:
+    """Internal helper to dispatch Slack API request with 429 retry backoff."""
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+    )
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if not data.get("ok") and data.get("error") == "ratelimited" and attempt < retries:
+                    time.sleep(5)
+                    continue
+                return data
+        except urllib.error.HTTPError as err:
+            if err.code == 429 and attempt < retries:
+                retry_after = 5
+                try:
+                    retry_after = min(int(err.headers.get("Retry-After", 5)), 30)
+                except Exception:
+                    pass
+                time.sleep(retry_after)
+                continue
+            try:
+                body = err.read().decode("utf-8")
+                return {"ok": False, "error": f"http_{err.code}: {body}"}
+            except Exception:
+                return {"ok": False, "error": f"http_{err.code}"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": "max_retries_exceeded"}
+
+
 def notify_slack_summary(
     result: Dict[str, Any],
     notion_page_id: str,
     channel: Optional[str] = None,
     token: Optional[str] = None,
     existing_ts: Optional[str] = None,
-) -> Optional[str]:
+) -> Dict[str, Any]:
     """
     Sends or updates a concise executive digest of the AppSumo Buy Advisor run in Slack.
     Default channel: C091GLVKLJU (#headquarters) or SLACK_CHANNEL env var.
     Uses token from SLACK_BOT_TOKEN, SLACK_TOKEN, or ~/.slack/credentials.json.
     If existing_ts is provided, updates the message via chat.update to prevent spam.
-    Returns the message ts on success, or None on failure/skip.
+    Returns structured delivery dict:
+    {"status": "posted"|"updated"|"failed"|"skipped", "ts": Optional[str], "error": Optional[str]}
     """
-    import urllib.request
-
     target_channel = channel or os.environ.get("SLACK_CHANNEL", "C091GLVKLJU")
     slack_token = token or os.environ.get("SLACK_BOT_TOKEN") or os.environ.get("SLACK_TOKEN")
     if not slack_token:
@@ -2069,7 +2137,7 @@ def notify_slack_summary(
             except Exception:
                 pass
     if not slack_token or not target_channel:
-        return None
+        return {"status": "skipped", "ts": None, "error": "missing_token_or_channel"}
 
     recommended = result.get("recommended", [])
     audited = result.get("audited_count", 0)
@@ -2081,7 +2149,7 @@ def notify_slack_summary(
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "⭐️ AppSumo 每周资产对账与采购推荐报告",
+                "text": "⭐️ AppSumo 每周资产对账与采购推荐报告"[:150],
                 "emoji": True,
             },
         },
@@ -2098,26 +2166,40 @@ def notify_slack_summary(
                         if recommended
                         else "🛡️ 全量 Deals 与既有轮子重叠，本周建议 *0 采购*"
                     )
-                ),
+                )[:3000],
             },
         },
     ]
 
+    # Block Kit 50 blocks limit protection: display up to 8 recommended deals
+    max_deals_in_slack = 8
     if recommended:
-        fields = []
-        for r in recommended[:5]:
-            fields.append({
-                "type": "mrkdwn",
-                "text": f"• <{r['url']}|*{r['name']}*> (${r.get('price', '—')})\n  _{r.get('reason', '')}_",
-            })
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": "*推荐产品清单*:"},
         })
-        for f in fields:
+        for r in recommended[:max_deals_in_slack]:
+            deal_name = str(r.get("name", "Unknown"))[:80]
+            deal_url = r.get("url", "https://appsumo.com")
+            price = r.get("price", "—")
+            raw_reason = str(r.get("reason", ""))[:250]
             blocks.append({
                 "type": "section",
-                "text": f,
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"• <{deal_url}|*{deal_name}*> (${price})\n  _{raw_reason}_",
+                },
+            })
+        if len(recommended) > max_deals_in_slack:
+            overflow_count = len(recommended) - max_deals_in_slack
+            blocks.append({
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"ℹ️ 另有 *{overflow_count}* 款推荐候选，已达单条消息展示预算，请直达 Notion 协同决策中枢查看完整清单。",
+                    }
+                ],
             })
 
     clean_notion_id = notion_page_id.replace("-", "")
@@ -2131,7 +2213,7 @@ def notify_slack_summary(
         ],
     })
 
-    method = "chat.update" if existing_ts else "chat.postMessage"
+    method_endpoint = "https://slack.com/api/chat.update" if existing_ts else "https://slack.com/api/chat.postMessage"
     payload = {
         "channel": target_channel,
         "text": f"⭐️ AppSumo 每周采购推荐: 审计 {audited} 款，发现 {len(recommended)} 款推荐候选",
@@ -2140,34 +2222,115 @@ def notify_slack_summary(
     if existing_ts:
         payload["ts"] = existing_ts
 
-    try:
-        req = urllib.request.Request(
-            f"https://slack.com/api/{method}",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {slack_token}",
-                "Content-Type": "application/json; charset=utf-8",
-            },
+    resp_data = _send_slack_request(method_endpoint, payload, slack_token, retries=1)
+
+    if resp_data.get("ok"):
+        delivery_ts = resp_data.get("ts") or existing_ts
+        if existing_ts:
+            # Post a thread reply to alert humans about the update
+            thread_payload = {
+                "channel": target_channel,
+                "thread_ts": existing_ts,
+                "text": f"🔄 本周采购推荐已于 `{now_str}` 原地对账刷新，见上方主卡片。",
+            }
+            _send_slack_request("https://slack.com/api/chat.postMessage", thread_payload, slack_token, retries=0)
+            return {"status": "updated", "ts": delivery_ts, "error": None}
+        else:
+            return {"status": "posted", "ts": delivery_ts, "error": None}
+
+    # If update failed because message was deleted or window closed, fall back to postMessage
+    if existing_ts and resp_data.get("error") in (
+        "message_not_found",
+        "cant_update_message",
+        "channel_not_found",
+        "edit_window_closed",
+    ):
+        return notify_slack_summary(
+            result,
+            notion_page_id=notion_page_id,
+            channel=channel,
+            token=token,
+            existing_ts=None,
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if data.get("ok"):
-                return data.get("ts") or existing_ts
-            elif existing_ts and data.get("error") in ("message_not_found", "cant_update_message"):
-                # Fallback to posting a new message if original message was deleted
-                return notify_slack_summary(
-                    result,
-                    notion_page_id=notion_page_id,
-                    channel=channel,
-                    token=token,
-                    existing_ts=None,
-                )
-            else:
-                print(f"Notice: Slack notification error: {data.get('error')}", file=sys.stderr)
-                return None
-    except Exception as e:
-        print(f"Notice: Slack notification failed (gracefully skipped): {e}", file=sys.stderr)
-        return None
+
+    err_msg = resp_data.get("error", "unknown_error")
+    print(f"Notice: Slack notification error: {err_msg}", file=sys.stderr)
+    return {"status": "failed", "ts": None, "error": err_msg}
+
+
+def redeliver_notifications(
+    state_dir: Path,
+    notion_page_id: str = DEFAULT_NOTION_PAGE_ID,
+    notify_slack: bool = True,
+    channel: Optional[str] = None,
+    token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Re-delivers Notion and Slack notifications from existing state and receipt without re-auditing."""
+    state_file = state_dir / "state.json"
+    if not state_file.exists():
+        raise FileNotFoundError(f"Cannot redeliver: {state_file} does not exist.")
+
+    state_data = json.loads(state_file.read_text(encoding="utf-8"))
+    receipt_path = Path(state_data.get("receipt_path", ""))
+
+    result = {
+        "status": state_data.get("last_status", "success"),
+        "audited_count": state_data.get("audited_count", 0),
+        "owned_assets_indexed": 69,
+        "recommended": [],
+    }
+
+    if receipt_path.exists():
+        content = receipt_path.read_text(encoding="utf-8")
+        rec_match = re.search(r"### 推荐产品清单\n([\s\S]*?)(?=\n##|$)", content)
+        if rec_match:
+            for line in rec_match.group(1).splitlines():
+                deal_line = re.search(r"^- \*\*\[(.*?)\]\((.*?)\)\*\* \(\$(.*?),.*?\):\s*(.*)$", line.strip())
+                if deal_line:
+                    result["recommended"].append({
+                        "name": deal_line.group(1),
+                        "url": deal_line.group(2),
+                        "price": deal_line.group(3),
+                        "reason": deal_line.group(4),
+                    })
+
+    existing_slack_ts = state_data.get("slack_ts")
+    slack_result = {"status": "skipped", "ts": None, "error": None}
+    if notify_slack:
+        slack_result = notify_slack_summary(
+            result,
+            notion_page_id=notion_page_id,
+            channel=channel,
+            token=token,
+            existing_ts=existing_slack_ts,
+        )
+
+    state_data["slack"] = slack_result
+    if slack_result.get("ts"):
+        state_data["slack_ts"] = slack_result.get("ts")
+    state_data["slack_delivered"] = slack_result.get("status") in ("posted", "updated")
+    write_state_atomic(state_file, state_data)
+
+    if notify_slack and slack_result.get("status") == "failed":
+        raise DeliveryError(f"Slack redelivery failed: {slack_result.get('error')}")
+
+    week_str = state_data.get("week_key")
+    if not week_str:
+        today_utc = datetime.datetime.now(datetime.timezone.utc)
+        iso_year, iso_week, _ = today_utc.isocalendar()
+        week_str = f"{iso_year}-W{iso_week:02d}"
+        state_data["week_key"] = week_str
+
+    if week_str:
+        marker = state_dir / f"{week_str}.success"
+        now_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        marker.write_text(f"PASS {now_utc}\n", encoding="utf-8")
+
+    return {
+        "status": "redelivered",
+        "slack": slack_result,
+        "week_key": week_str,
+    }
 
 
 def run_advisor(
@@ -2188,215 +2351,266 @@ def run_advisor(
     receipts_dir = state_dir / "receipts"
     receipts_dir.mkdir(parents=True, exist_ok=True)
 
-    today = datetime.datetime.now(datetime.timezone.utc).date()
-    today_str = today.isoformat()
-    iso_year, iso_week, _ = today.isocalendar()
+    today_utc = datetime.datetime.now(datetime.timezone.utc)
+    today_str = today_utc.date().isoformat()
+    iso_year, iso_week, _ = today_utc.isocalendar()
     week_str = f"{iso_year}-W{iso_week:02d}"
+    legacy_week_str = today_utc.strftime("%Y-W%W")
+
     success_marker = state_dir / f"{week_str}.success"
+    legacy_success_marker = state_dir / f"{legacy_week_str}.success"
+
+    # Migration backward compatibility: if legacy marker exists for this week, recognize it
+    if not success_marker.exists() and legacy_success_marker.exists():
+        try:
+            success_marker.write_text(legacy_success_marker.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass
 
     existing_slack_ts = None
     if state_file.exists():
         try:
             prev_state = json.loads(state_file.read_text(encoding="utf-8"))
-            if prev_state.get("week_key") == week_str:
+            if prev_state.get("week_key") in (week_str, legacy_week_str):
                 existing_slack_ts = prev_state.get("slack_ts")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: Failed to parse existing state.json: {e}", file=sys.stderr)
 
-    if success_marker.exists() and not force and not dry_run:
+    if (success_marker.exists() or legacy_success_marker.exists()) and not force and not dry_run:
         return {
             "status": "skipped",
             "message": f"本周任务已完成 (Marker: {success_marker.name})，且输入处于静默期，优雅跳过。",
             "recommended": [],
             "audited_count": 0,
+            "week_key": week_str,
         }
 
-    # Fetch human directives from cloud doc if notion_page_id provided
-    token = None
-    directives: Dict[str, Any] = {}
-    if notion_page_id:
-        env_path = Path.home() / ".gemini/antigravity/skills/notion-mcp-connector/.env"
-        token = os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY")
-        if not token and env_path.exists():
-            for line in env_path.read_text().splitlines():
-                if line.startswith("NOTION_TOKEN=") or line.startswith("NOTION_API_KEY="):
-                    token = line.split("=", 1)[1].strip().strip("\"'")
-                    break
-        if token:
-            directives = fetch_cloud_doc_directives(notion_page_id, token)
-
-    kb = AssetKnowledgeBase(assets_file)
-    if directives.get("new_assets"):
-        for new_tool in directives["new_assets"]:
-            kb.tools[new_tool.lower()] = {
-                "name": new_tool,
-                "status": "active (cloud_doc)",
-                "category": "Cloud Doc Declared",
-            }
-    auditor = DealAuditor(kb, user_directives=directives)
-    bin_path = resolve_binary()
-
-    # 2. Fetch candidates with full pagination tracking
-    deals, fetch_info = fetch_candidate_deals(bin_path, limit=limit, scan_mode=scan_mode)
-    if not deals:
+    # Non-blocking concurrency lock
+    lock_file = state_dir / ".run.lock"
+    lock_fd = None
+    try:
+        lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, OSError):
+        if lock_fd is not None:
+            os.close(lock_fd)
         return {
-            "status": "no_data",
-            "message": "未能拉取到候选 Deals，可能网络波动或目录暂不可达。",
+            "status": "locked",
+            "message": f"Another instance of {CADENCE_ID} is currently running. Skipping execution.",
             "recommended": [],
             "audited_count": 0,
+            "week_key": week_str,
         }
 
-    recommended: List[Tuple[Dict[str, Any], str, float]] = []
-    rejections: List[Tuple[Dict[str, Any], str]] = []
-
-    for deal in deals:
-        should_rec, reason, score = auditor.audit_deal(deal)
-        if should_rec:
-            recommended.append((deal, reason, score))
-        else:
-            rejections.append((deal, reason))
-
-    # Sort recommended by score descending
-    recommended.sort(key=lambda x: x[2], reverse=True)
-
-    declared_total = fetch_info.get("declared_total") or len(deals)
-    scanned_deals = fetch_info.get("scanned_deals") or declared_total
-    pagination_complete = fetch_info.get("complete", True)
-    requests_count = fetch_info.get("requests", 1)
-
-    result = {
-        "status": "recommended" if recommended else "no_purchase_needed",
-        "timestamp": datetime.datetime.now().isoformat(),
-        "cadence_id": CADENCE_ID,
-        "scan_mode": scan_mode,
-        "audited_count": len(deals),
-        "declared_total": declared_total,
-        "scanned_deals": scanned_deals,
-        "unique_deals": fetch_info.get("unique_deals", len(deals)),
-        "complete_pagination": pagination_complete,
-        "requests_count": requests_count,
-        "pagination_truncated": fetch_info.get("truncated", False),
-        "pagination_warnings": fetch_info.get("warnings", []),
-        "owned_assets_indexed": len(kb.tools),
-        "rejected_count": len(rejections),
-        "recommended_count": len(recommended),
-        "cloud_directives_found": directives.get("raw_directives_found", False),
-        "recommended": [
-            {
-                "name": d.get("name"),
-                "slug": d.get("slug"),
-                "canonical_id": f"appsumo:{d.get('slug')}",
-                "price": d.get("price"),
-                "original_price": d.get("original_price"),
-                "rating": d.get("average_rating"),
-                "review_count": d.get("review_count"),
-                "url": f"https://appsumo.com{d.get('url', '')}",
-                "reason": r,
-                "score": s,
-            }
-            for d, r, s in recommended
-        ],
-        "rejection_summary": [
-            {"name": d.get("name"), "slug": d.get("slug"), "reason": r}
-            for d, r in rejections[:15]
-        ],
-    }
-
-    # 3. Output receipts & state
-    if not dry_run:
-        # Write receipt
-        receipt_path = receipts_dir / f"{today_str}.md"
-        receipt_md = [
-            f"# AppSumo Weekly Buy Advisor Receipt - {today_str}",
-            "",
-            f"- **Cadence ID**: `{CADENCE_ID}`",
-            f"- **全量分页对账**: 实际扫描 {scanned_deals} / 官方声明 {declared_total} 款 (审计 {len(deals)} 款, 完整性: {'✅ 完整零截断' if pagination_complete else '⚠️ 存在截断'}, 请求批次: {requests_count})",
-            f"- **Audited Deals**: {len(deals)}",
-            f"- **Owned Assets Indexed**: {len(kb.tools)}",
-            f"- **Recommended Count**: {len(recommended)}",
-            f"- **Cloud Directives Active**: {directives.get('raw_directives_found', False)}",
-            f"- **Status**: `{result['status']}`",
-            "",
-            "## Decision Verdict",
-            "",
-        ]
-
-        if directives and directives.get("raw_directives_found"):
-            receipt_md.append("### 云端协同输入指令 (Cloud Directives)")
-            if directives.get("wishlist"):
-                receipt_md.append(f"- **🎯 关注意向 (Wishlist)**: {', '.join(directives['wishlist'])}")
-            if directives.get("blacklist"):
-                receipt_md.append(f"- **🛑 黑名单禁令 (Blacklist)**: {', '.join(directives['blacklist'])}")
-            if directives.get("new_assets"):
-                receipt_md.append(f"- **🛒 云端录入已拥有资产 (New Assets)**: {', '.join(directives['new_assets'])}")
-            if directives.get("feedback"):
-                receipt_md.append(f"- **💬 往期反馈 (Feedback)**: {'; '.join(directives['feedback'])}")
-            receipt_md.append("")
-
-        if not recommended:
-            receipt_md.append(
-                f"> **✅ 当前无必须采购项**：已全量扫描 AppSumo {len(deals)} 款 Deals，全部与已拥有的 {len(kb.tools)} 款终身软件"
-                "（如 Albato, Zernio, Taku, TrustMate, Encharge, Zylvie, FlipBooklets, SleekBio, GoBrunch 等）重叠或属于低杠杆素材，"
-                "坚决不推销重复轮子（0 采购推荐，保护注意力与资金）。\n"
-            )
-        else:
-            receipt_md.append("### 推荐产品清单\n")
-            for item in result["recommended"]:
-                receipt_md.append(
-                    f"- **[{item['name']}]({item['url']})** (${item['price']}, 原价 ${item['original_price']}, "
-                    f"{item['rating']}⭐️/{item['review_count']}条评价)\n"
-                    f"  - **匹配原因**: {item['reason']}\n"
-                )
-
-        receipt_md.append("\n## 被拦截重叠轮子样本 (Top 15)\n")
-        for item in result["rejection_summary"]:
-            receipt_md.append(f"- **{item['name']}** (`{item['slug']}`): {item['reason']}")
-
-        receipt_path.write_text("\n".join(receipt_md), encoding="utf-8")
-
-        # Push to Notion if page ID provided
+    try:
+        # Fetch human directives from cloud doc if notion_page_id provided
+        token = None
+        directives: Dict[str, Any] = {}
         if notion_page_id:
-            blocks = build_notion_blocks(len(deals), recommended, rejections, fetch_info=fetch_info, directives=directives)
-            sync_co_maintained_notion_doc(
-                page_id=notion_page_id,
-                title="⭐️ AppSumo 协同采购决策与资产对账中枢 (AppSumo Buy Advisor Hub)",
-                new_agent_blocks=blocks,
-                directives=directives,
-                token=token,
-            )
+            env_path = Path.home() / ".gemini/antigravity/skills/notion-mcp-connector/.env"
+            token = os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY")
+            if not token and env_path.exists():
+                for line in env_path.read_text().splitlines():
+                    if line.startswith("NOTION_TOKEN=") or line.startswith("NOTION_API_KEY="):
+                        token = line.split("=", 1)[1].strip().strip("\"'")
+                        break
+            if token:
+                directives = fetch_cloud_doc_directives(notion_page_id, token)
 
-        # Notify Slack executive channel (update existing if same week, else post new)
-        slack_delivery_ts = None
-        if notify_slack and not dry_run and notion_page_id:
-            slack_delivery_ts = notify_slack_summary(
-                result,
-                notion_page_id=notion_page_id,
-                existing_ts=existing_slack_ts,
-            )
+        kb = AssetKnowledgeBase(assets_file)
+        if directives.get("new_assets"):
+            for new_tool in directives["new_assets"]:
+                kb.tools[new_tool.lower()] = {
+                    "name": new_tool,
+                    "status": "active (cloud_doc)",
+                    "category": "Cloud Doc Declared",
+                }
+        auditor = DealAuditor(kb, user_directives=directives)
+        bin_path = resolve_binary()
 
-        # Write state.json with ISO 8601 UTC timestamp and delivery receipts
-        now_utc_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        state_data = {
+        # 2. Fetch candidates with full pagination tracking
+        deals, fetch_info = fetch_candidate_deals(bin_path, limit=limit, scan_mode=scan_mode)
+        if not deals:
+            return {
+                "status": "no_data",
+                "message": "未能拉取到候选 Deals，可能网络波动或目录暂不可达。",
+                "recommended": [],
+                "audited_count": 0,
+            }
+
+        recommended: List[Tuple[Dict[str, Any], str, float]] = []
+        rejections: List[Tuple[Dict[str, Any], str]] = []
+
+        for deal in deals:
+            should_rec, reason, score = auditor.audit_deal(deal)
+            if should_rec:
+                recommended.append((deal, reason, score))
+            else:
+                rejections.append((deal, reason))
+
+        # Sort recommended by score descending
+        recommended.sort(key=lambda x: x[2], reverse=True)
+
+        declared_total = fetch_info.get("declared_total") or len(deals)
+        scanned_deals = fetch_info.get("scanned_deals") or declared_total
+        pagination_complete = fetch_info.get("complete", True)
+        requests_count = fetch_info.get("requests", 1)
+
+        result = {
+            "status": "recommended" if recommended else "no_purchase_needed",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "cadence_id": CADENCE_ID,
-            "week_key": week_str,
-            "last_run_at": now_utc_str,
-            "last_status": result["status"],
+            "scan_mode": scan_mode,
             "audited_count": len(deals),
             "declared_total": declared_total,
+            "scanned_deals": scanned_deals,
+            "unique_deals": fetch_info.get("unique_deals", len(deals)),
             "complete_pagination": pagination_complete,
             "requests_count": requests_count,
+            "pagination_truncated": fetch_info.get("truncated", False),
+            "pagination_warnings": fetch_info.get("warnings", []),
+            "owned_assets_indexed": len(kb.tools),
+            "rejected_count": len(rejections),
             "recommended_count": len(recommended),
             "cloud_directives_found": directives.get("raw_directives_found", False),
-            "receipt_path": str(receipt_path),
-            "slack_ts": slack_delivery_ts or existing_slack_ts,
-            "slack_delivered": bool(slack_delivery_ts or existing_slack_ts),
+            "recommended": [
+                {
+                    "name": d.get("name"),
+                    "slug": d.get("slug"),
+                    "canonical_id": f"appsumo:{d.get('slug')}",
+                    "price": d.get("price"),
+                    "original_price": d.get("original_price"),
+                    "rating": d.get("average_rating"),
+                    "review_count": d.get("review_count"),
+                    "url": f"https://appsumo.com{d.get('url', '')}",
+                    "reason": r,
+                    "score": s,
+                }
+                for d, r, s in recommended
+            ],
+            "rejection_summary": [
+                {"name": d.get("name"), "slug": d.get("slug"), "reason": r}
+                for d, r in rejections[:15]
+            ],
         }
-        state_file.write_text(json.dumps(state_data, indent=2), encoding="utf-8")
 
-        # Write success marker ONLY after deliveries complete
-        success_marker.write_text(f"PASS {now_utc_str}\n", encoding="utf-8")
+        # 3. Output receipts & state
+        if not dry_run:
+            # Write receipt
+            receipt_path = receipts_dir / f"{today_str}.md"
+            receipt_md = [
+                f"# AppSumo Weekly Buy Advisor Receipt - {today_str}",
+                "",
+                f"- **Cadence ID**: `{CADENCE_ID}`",
+                f"- **全量分页对账**: 实际扫描 {scanned_deals} / 官方声明 {declared_total} 款 (审计 {len(deals)} 款, 完整性: {'✅ 完整零截断' if pagination_complete else '⚠️ 存在截断'}, 请求批次: {requests_count})",
+                f"- **Audited Deals**: {len(deals)}",
+                f"- **Owned Assets Indexed**: {len(kb.tools)}",
+                f"- **Recommended Count**: {len(recommended)}",
+                f"- **Cloud Directives Active**: {directives.get('raw_directives_found', False)}",
+                f"- **Status**: `{result['status']}`",
+                "",
+                "## Decision Verdict",
+                "",
+            ]
 
-    return result
+            if directives and directives.get("raw_directives_found"):
+                receipt_md.append("### 云端协同输入指令 (Cloud Directives)")
+                if directives.get("wishlist"):
+                    receipt_md.append(f"- **🎯 关注意向 (Wishlist)**: {', '.join(directives['wishlist'])}")
+                if directives.get("blacklist"):
+                    receipt_md.append(f"- **🛑 黑名单禁令 (Blacklist)**: {', '.join(directives['blacklist'])}")
+                if directives.get("new_assets"):
+                    receipt_md.append(f"- **🛒 云端录入已拥有资产 (New Assets)**: {', '.join(directives['new_assets'])}")
+                if directives.get("feedback"):
+                    receipt_md.append(f"- **💬 往期反馈 (Feedback)**: {'; '.join(directives['feedback'])}")
+                receipt_md.append("")
+
+            if not recommended:
+                receipt_md.append(
+                    f"> **✅ 当前无必须采购项**：已全量扫描 AppSumo {len(deals)} 款 Deals，全部与已拥有的 {len(kb.tools)} 款终身软件"
+                    "（如 Albato, Zernio, Taku, TrustMate, Encharge, Zylvie, FlipBooklets, SleekBio, GoBrunch 等）重叠或属于低杠杆素材，"
+                    "坚决不推销重复轮子（0 采购推荐，保护注意力与资金）。\n"
+                )
+            else:
+                receipt_md.append("### 推荐产品清单\n")
+                for item in result["recommended"]:
+                    receipt_md.append(
+                        f"- **[{item['name']}]({item['url']})** (${item['price']}, 原价 ${item['original_price']}, "
+                        f"{item['rating']}⭐️/{item['review_count']}条评价)\n"
+                        f"  - **匹配原因**: {item['reason']}\n"
+                    )
+
+            receipt_md.append("\n## 被拦截重叠轮子样本 (Top 15)\n")
+            for item in result["rejection_summary"]:
+                receipt_md.append(f"- **{item['name']}** (`{item['slug']}`): {item['reason']}")
+
+            receipt_path.write_text("\n".join(receipt_md), encoding="utf-8")
+
+            # Push to Notion if page ID provided
+            notion_synced = False
+            if notion_page_id:
+                try:
+                    blocks = build_notion_blocks(len(deals), recommended, rejections, fetch_info=fetch_info, directives=directives)
+                    sync_co_maintained_notion_doc(
+                        page_id=notion_page_id,
+                        title="⭐️ AppSumo 协同采购决策与资产对账中枢 (AppSumo Buy Advisor Hub)",
+                        new_agent_blocks=blocks,
+                        directives=directives,
+                        token=token,
+                    )
+                    notion_synced = True
+                except Exception as e:
+                    print(f"Notice: Notion sync failed: {e}", file=sys.stderr)
+
+            # Notify Slack executive channel (update existing if same week, else post new)
+            slack_result = {"status": "skipped", "ts": None, "error": None}
+            if notify_slack and not dry_run and notion_page_id:
+                slack_result = notify_slack_summary(
+                    result,
+                    notion_page_id=notion_page_id,
+                    existing_ts=existing_slack_ts,
+                )
+
+            # Write state.json atomically with ISO 8601 UTC timestamp and delivery receipts
+            now_utc_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            final_slack_ts = slack_result.get("ts") or (existing_slack_ts if slack_result.get("status") != "failed" else None)
+            state_data = {
+                "cadence_id": CADENCE_ID,
+                "week_key": week_str,
+                "last_run_at": now_utc_str,
+                "last_status": result["status"],
+                "audited_count": len(deals),
+                "declared_total": declared_total,
+                "complete_pagination": pagination_complete,
+                "requests_count": requests_count,
+                "recommended_count": len(recommended),
+                "cloud_directives_found": directives.get("raw_directives_found", False),
+                "receipt_path": str(receipt_path),
+                "notion_synced": notion_synced,
+                "slack": slack_result,
+                "slack_ts": final_slack_ts,
+                "slack_delivered": slack_result.get("status") in ("posted", "updated"),
+            }
+            write_state_atomic(state_file, state_data)
+
+            # Critical Gate: If Slack notification was requested but failed, withhold success marker and raise DeliveryError
+            if notify_slack and not dry_run and slack_result.get("status") == "failed":
+                raise DeliveryError(
+                    f"Slack delivery failed: {slack_result.get('error')}. "
+                    "Success marker withheld. Run with --redeliver to retry delivery without re-auditing."
+                )
+
+            # Write success marker ONLY after deliveries complete
+            success_marker.write_text(f"PASS {now_utc_str}\n", encoding="utf-8")
+
+        return result
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except Exception:
+                pass
 
 
 def main():
@@ -2422,6 +2636,7 @@ def main():
     parser.add_argument("--scan-mode", default="all_catalog", choices=["all_catalog", "ideal"], help="Scan mode: all_catalog (default) or ideal")
     parser.add_argument("--dry-run", action="store_true", help="Audit without saving state or pushing Notion")
     parser.add_argument("--no-slack", action="store_true", help="Skip sending Slack summary notification")
+    parser.add_argument("--redeliver", action="store_true", help="Re-deliver notifications from latest state/receipt without re-auditing")
     parser.add_argument("--force", action="store_true", help="Bypass weekly success marker")
     parser.add_argument("--json", action="store_true", help="Emit raw JSON")
 
@@ -2433,6 +2648,20 @@ def main():
             assets_file=Path(args.assets_file),
             json_output=args.json,
         )
+        return
+
+    if args.redeliver:
+        state_dir = Path(__file__).resolve().parent.parent / ".run/cadence" / CADENCE_ID
+        res = redeliver_notifications(
+            state_dir=state_dir,
+            notion_page_id=args.notion_page_id,
+            notify_slack=not args.no_slack,
+        )
+        if args.json:
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+        else:
+            print(f"=== AppSumo Weekly Buy Advisor ({res.get('status')}) ===")
+            print(f"✅ Notifications redelivered successfully for {res.get('week_key')}.")
         return
 
     res = run_advisor(

@@ -7,8 +7,13 @@ import unittest
 from unittest import mock
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+import datetime
 import json
+import os
+import shutil
 import sys
+import tempfile
+import urllib.error
 
 # Ensure scripts dir is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -16,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from appsumo_buy_advisor import (
     AssetKnowledgeBase,
     DealAuditor,
+    DeliveryError,
     COMPETITOR_TO_OWNED_ASSET,
     SATURATED_SUBCATEGORIES,
     build_notion_blocks,
@@ -23,6 +29,9 @@ from appsumo_buy_advisor import (
     explain_deal,
     fetch_candidate_deals,
     notify_slack_summary,
+    redeliver_notifications,
+    run_advisor,
+    write_state_atomic,
 )
 
 SAMPLE_ASSETS_MD = """---
@@ -793,20 +802,22 @@ status: active
 
 
 class TestSlackNotification(unittest.TestCase):
-    def test_missing_token_returns_none_gracefully(self):
+    def test_missing_token_returns_skipped_hermetically(self):
         result = {
             "audited_count": 540,
             "owned_assets_indexed": 69,
             "recommended": [],
         }
-        with mock.patch("pathlib.Path.exists", return_value=False):
-            ts = notify_slack_summary(
-                result,
-                notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
-                channel="fake_channel",
-                token="",
-            )
-            self.assertIsNone(ts)
+        with mock.patch.dict(os.environ, {"SLACK_BOT_TOKEN": "", "SLACK_TOKEN": ""}, clear=True):
+            with mock.patch("pathlib.Path.exists", return_value=False):
+                res = notify_slack_summary(
+                    result,
+                    notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
+                    channel="fake_channel",
+                    token="",
+                )
+                self.assertEqual(res["status"], "skipped")
+                self.assertIsNone(res["ts"])
 
     @mock.patch("urllib.request.urlopen")
     def test_successful_slack_notification(self, mock_urlopen):
@@ -831,50 +842,20 @@ class TestSlackNotification(unittest.TestCase):
                 }
             ],
         }
-        ts = notify_slack_summary(
+        res = notify_slack_summary(
             result,
             notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
             channel="C091GLVKLJU",
             token="xoxp-fake-token",
         )
-        self.assertEqual(ts, "1234567890.123456")
+        self.assertEqual(res["status"], "posted")
+        self.assertEqual(res["ts"], "1234567890.123456")
         self.assertTrue(mock_urlopen.called)
         req = mock_urlopen.call_args[0][0]
         self.assertIn("chat.postMessage", req.full_url)
 
     @mock.patch("urllib.request.urlopen")
-    def test_slack_notification_updates_existing_message(self, mock_urlopen):
-        class FakeResponse:
-            def read(self):
-                return b'{"ok": true, "ts": "1111111111.222222"}'
-            def __enter__(self):
-                return self
-            def __exit__(self, *args):
-                pass
-
-        mock_urlopen.return_value = FakeResponse()
-        result = {
-            "audited_count": 550,
-            "owned_assets_indexed": 69,
-            "recommended": [],
-        }
-        ts = notify_slack_summary(
-            result,
-            notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
-            channel="C091GLVKLJU",
-            token="xoxp-fake-token",
-            existing_ts="1111111111.222222",
-        )
-        self.assertEqual(ts, "1111111111.222222")
-        self.assertTrue(mock_urlopen.called)
-        req = mock_urlopen.call_args[0][0]
-        self.assertIn("chat.update", req.full_url)
-        body = json.loads(req.data.decode("utf-8"))
-        self.assertEqual(body.get("ts"), "1111111111.222222")
-
-    @mock.patch("urllib.request.urlopen")
-    def test_slack_notification_fallback_if_message_deleted(self, mock_urlopen):
-        # First call fails with message_not_found, second call succeeds as postMessage
+    def test_slack_notification_updates_existing_message_with_thread(self, mock_urlopen):
         call_count = 0
         def fake_urlopen(req, timeout=10):
             nonlocal call_count
@@ -884,8 +865,8 @@ class TestSlackNotification(unittest.TestCase):
                     self.count = count
                 def read(self):
                     if self.count == 1:
-                        return b'{"ok": false, "error": "message_not_found"}'
-                    return b'{"ok": true, "ts": "9999999999.888888"}'
+                        return b'{"ok": true, "ts": "new_updated_ts_9999"}'
+                    return b'{"ok": true, "ts": "thread_reply_ts_8888"}'
                 def __enter__(self):
                     return self
                 def __exit__(self, *args):
@@ -898,15 +879,233 @@ class TestSlackNotification(unittest.TestCase):
             "owned_assets_indexed": 69,
             "recommended": [],
         }
-        ts = notify_slack_summary(
+        res = notify_slack_summary(
+            result,
+            notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
+            channel="C091GLVKLJU",
+            token="xoxp-fake-token",
+            existing_ts="1111111111.222222",
+        )
+        self.assertEqual(res["status"], "updated")
+        self.assertEqual(res["ts"], "new_updated_ts_9999")
+        self.assertEqual(call_count, 2)
+        # Call 1 was chat.update
+        req1 = mock_urlopen.call_args_list[0][0][0]
+        self.assertIn("chat.update", req1.full_url)
+        body1 = json.loads(req1.data.decode("utf-8"))
+        self.assertEqual(body1.get("ts"), "1111111111.222222")
+        # Call 2 was threaded reply on existing_ts
+        req2 = mock_urlopen.call_args_list[1][0][0]
+        self.assertIn("chat.postMessage", req2.full_url)
+        body2 = json.loads(req2.data.decode("utf-8"))
+        self.assertEqual(body2.get("thread_ts"), "1111111111.222222")
+
+    @mock.patch("urllib.request.urlopen")
+    def test_slack_notification_fallback_if_message_deleted(self, mock_urlopen):
+        call_count = 0
+        def fake_urlopen(req, timeout=10):
+            nonlocal call_count
+            call_count += 1
+            class FakeResp:
+                def __init__(self, count):
+                    self.count = count
+                def read(self):
+                    if self.count == 1:
+                        return b'{"ok": false, "error": "message_not_found"}'
+                    return b'{"ok": true, "ts": "fallback_post_ts_7777"}'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return FakeResp(call_count)
+
+        mock_urlopen.side_effect = fake_urlopen
+        result = {
+            "audited_count": 550,
+            "owned_assets_indexed": 69,
+            "recommended": [],
+        }
+        res = notify_slack_summary(
             result,
             notion_page_id="3f2e1b43-2393-815a-97e2-e06c9efcbfdc",
             channel="C091GLVKLJU",
             token="xoxp-fake-token",
             existing_ts="deleted_ts_123",
         )
-        self.assertEqual(ts, "9999999999.888888")
+        self.assertEqual(res["status"], "posted")
+        self.assertEqual(res["ts"], "fallback_post_ts_7777")
         self.assertEqual(call_count, 2)
+        # Call 2 must be chat.postMessage and must NOT have "ts"
+        req2 = mock_urlopen.call_args_list[1][0][0]
+        self.assertIn("chat.postMessage", req2.full_url)
+        body2 = json.loads(req2.data.decode("utf-8"))
+        self.assertNotIn("ts", body2)
+
+    @mock.patch("time.sleep", return_value=None)
+    @mock.patch("urllib.request.urlopen")
+    def test_slack_rate_limit_backoff_and_retry(self, mock_urlopen, mock_sleep):
+        call_count = 0
+        def fake_urlopen(req, timeout=10):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                fp = mock.MagicMock()
+                fp.read.return_value = b'{"ok": false, "error": "ratelimited"}'
+                headers = {"Retry-After": "2"}
+                raise urllib.error.HTTPError("https://slack.com", 429, "Too Many Requests", headers, fp)
+            class FakeResp:
+                def read(self):
+                    return b'{"ok": true, "ts": "retry_success_ts"}'
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return FakeResp()
+
+        mock_urlopen.side_effect = fake_urlopen
+        result = {"audited_count": 100, "owned_assets_indexed": 69, "recommended": []}
+        res = notify_slack_summary(result, "fake-notion-id", channel="C091GLVKLJU", token="xoxp-fake")
+        self.assertEqual(res["status"], "posted")
+        self.assertEqual(res["ts"], "retry_success_ts")
+        self.assertEqual(call_count, 2)
+        self.assertTrue(mock_sleep.called)
+
+    @mock.patch("urllib.request.urlopen")
+    def test_block_kit_overflow_budget_protection(self, mock_urlopen):
+        class FakeResponse:
+            def read(self):
+                return b'{"ok": true, "ts": "overflow_test_ts"}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        mock_urlopen.return_value = FakeResponse()
+        twenty_deals = [
+            {"name": f"Deal {i}", "price": 49.0, "url": f"https://appsumo.com/deal-{i}", "reason": f"Reason {i}"}
+            for i in range(20)
+        ]
+        result = {"audited_count": 500, "owned_assets_indexed": 69, "recommended": twenty_deals}
+        res = notify_slack_summary(result, "fake-notion-id", channel="C091GLVKLJU", token="xoxp-fake")
+        self.assertEqual(res["status"], "posted")
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data.decode("utf-8"))
+        blocks = body.get("blocks", [])
+        self.assertLessEqual(len(blocks), 40)
+        overflow_block = any("另有" in str(b) and "Notion" in str(b) for b in blocks)
+        self.assertTrue(overflow_block)
+
+
+class TestDeliveryPipeline(unittest.TestCase):
+    def test_write_state_atomic(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "state.json"
+            write_state_atomic(target, {"hello": "world", "status": "ok"})
+            self.assertTrue(target.exists())
+            data = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(data["hello"], "world")
+            self.assertEqual(data["status"], "ok")
+
+    @mock.patch("appsumo_buy_advisor.fetch_cloud_doc_directives", return_value={})
+    @mock.patch("appsumo_buy_advisor.sync_co_maintained_notion_doc")
+    @mock.patch("appsumo_buy_advisor.fetch_candidate_deals")
+    @mock.patch("appsumo_buy_advisor.notify_slack_summary")
+    def test_run_advisor_delivery_failure_withholds_success_marker(self, mock_slack, mock_deals, mock_notion_sync, mock_directives):
+        mock_deals.return_value = ([
+            {"name": "Valid Deal", "slug": "valid-deal", "price": 49.0, "average_rating": 4.9, "review_count": 100}
+        ], {"complete": True, "requests": 1, "declared_total": 1})
+        mock_slack.return_value = {"status": "failed", "ts": None, "error": "slack_timeout"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_assets = Path(tmpdir) / "assets.md"
+            fake_assets.write_text("# Assets\n", encoding="utf-8")
+            with mock.patch("appsumo_buy_advisor.CADENCE_ID", "TEST-CADENCE"):
+                state_dir = Path(__file__).resolve().parent.parent / ".run/cadence" / "TEST-CADENCE"
+                state_dir.mkdir(parents=True, exist_ok=True)
+                iso_year, iso_week, _ = datetime.datetime.now(datetime.timezone.utc).isocalendar()
+                marker = state_dir / f"{iso_year}-W{iso_week:02d}.success"
+                marker.unlink(missing_ok=True)
+
+                with self.assertRaises(DeliveryError):
+                    run_advisor(
+                        assets_file=fake_assets,
+                        notion_page_id="fake-page",
+                        limit=1,
+                        force=True,
+                        notify_slack=True,
+                    )
+                # Success marker must NOT exist because delivery failed
+                self.assertFalse(marker.exists())
+                # State file must exist and record failure
+                state_file = state_dir / "state.json"
+                self.assertTrue(state_file.exists())
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                self.assertEqual(state["slack"]["status"], "failed")
+                self.assertFalse(state["slack_delivered"])
+                # Clean up test state dir
+                shutil.rmtree(state_dir, ignore_errors=True)
+
+    @mock.patch("appsumo_buy_advisor.fetch_cloud_doc_directives", return_value={})
+    @mock.patch("appsumo_buy_advisor.sync_co_maintained_notion_doc")
+    @mock.patch("appsumo_buy_advisor.fetch_candidate_deals")
+    @mock.patch("appsumo_buy_advisor.notify_slack_summary")
+    def test_run_advisor_delivery_success_writes_marker(self, mock_slack, mock_deals, mock_notion_sync, mock_directives):
+        mock_deals.return_value = ([
+            {"name": "Valid Deal", "slug": "valid-deal", "price": 49.0, "average_rating": 4.9, "review_count": 100}
+        ], {"complete": True, "requests": 1, "declared_total": 1})
+        mock_slack.return_value = {"status": "posted", "ts": "success_ts_1234", "error": None}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_assets = Path(tmpdir) / "assets.md"
+            fake_assets.write_text("# Assets\n", encoding="utf-8")
+            with mock.patch("appsumo_buy_advisor.CADENCE_ID", "TEST-CADENCE"):
+                state_dir = Path(__file__).resolve().parent.parent / ".run/cadence" / "TEST-CADENCE"
+                state_dir.mkdir(parents=True, exist_ok=True)
+                iso_year, iso_week, _ = datetime.datetime.now(datetime.timezone.utc).isocalendar()
+                marker = state_dir / f"{iso_year}-W{iso_week:02d}.success"
+                marker.unlink(missing_ok=True)
+
+                res = run_advisor(
+                    assets_file=fake_assets,
+                    notion_page_id="fake-page",
+                    limit=1,
+                    force=True,
+                    notify_slack=True,
+                )
+                self.assertIn(res["status"], ("recommended", "no_purchase_needed"))
+                self.assertTrue(marker.exists())
+                state_file = state_dir / "state.json"
+                self.assertTrue(state_file.exists())
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                self.assertEqual(state["slack"]["status"], "posted")
+                self.assertTrue(state["slack_delivered"])
+                self.assertEqual(state["slack_ts"], "success_ts_1234")
+                shutil.rmtree(state_dir, ignore_errors=True)
+
+    @mock.patch("appsumo_buy_advisor.notify_slack_summary")
+    def test_redeliver_notifications(self, mock_slack):
+        mock_slack.return_value = {"status": "posted", "ts": "redelivered_ts_999", "error": None}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            receipt_file = state_dir / "2026-11-10.md"
+            receipt_file.write_text("### 推荐产品清单\n- **[Test Tool](https://appsumo.com)** ($49, 原价 $100, 5.0⭐️/10条评价):\n  - **匹配原因**: 测试匹配\n", encoding="utf-8")
+            state_file = state_dir / "state.json"
+            state_file.write_text(json.dumps({
+                "cadence_id": "TEST",
+                "week_key": "2026-W46",
+                "last_status": "recommended",
+                "audited_count": 10,
+                "receipt_path": str(receipt_file),
+                "slack_ts": None,
+            }), encoding="utf-8")
+
+            res = redeliver_notifications(state_dir, notion_page_id="fake-page", notify_slack=True)
+            self.assertEqual(res["status"], "redelivered")
+            self.assertEqual(res["slack"]["status"], "posted")
+            self.assertEqual(res["slack"]["ts"], "redelivered_ts_999")
+            # Marker must be created
+            marker = state_dir / "2026-W46.success"
+            self.assertTrue(marker.exists())
 
 
 if __name__ == "__main__":
