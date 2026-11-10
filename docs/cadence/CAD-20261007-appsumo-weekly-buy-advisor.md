@@ -8,7 +8,7 @@
 | Activation Status | `active` |
 | Activation Mode | `agent_self_schedule` |
 | Created | `2026-10-07` |
-| Updated | `2026-11-02` |
+| Updated | `2026-11-10` |
 | Created By | `Vec + Antigravity Agent` |
 | Planned By | `Vec + Antigravity Agent` |
 | Project Ref | `Weekly AppSumo deal scanning and recommendation engine cross-referenced with 67+ purchased SaaS assets and local developer skills; co-maintains cloud Notion hub (reads human wishlist/blacklist/new assets without erasing notes); strictly filters duplicate wheels across full live catalog (461+ deals); recommends nothing if no capability gaps exist; syncs to Notion` |
@@ -32,7 +32,7 @@
 | State Owner | `project_local` |
 | Checkpoint Path | `.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/state.json` |
 | Success Marker Pattern | `.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/YYYY-WW.success` |
-| Output Owner | `Notion Cloud Hub 3f2e1b43-2393-815a-97e2-e06c9efcbfdc; local SQLite deals snapshot; .run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/receipts/YYYY-MM-DD.md` |
+| Output Owner | `Notion Cloud Hub 3f2e1b43-2393-815a-97e2-e06c9efcbfdc; Slack #headquarters (C091GLVKLJU); local SQLite deals snapshot; .run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/receipts/YYYY-MM-DD.md` |
 | Configuration Owner | `this card; scripts/appsumo_buy_advisor.py` |
 | Receipt Pattern | `.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/receipts/YYYY-MM-DD.md` |
 | Evidence / Dedupe Rule | `Aggressive weekly scan of full AppSumo deal catalog matching 67+ owned assets from appsumo_purchased_assets.md and project-capabilities.md; co-maintains cloud Notion hub by reading Zone 1 Human Directives (wishlist/blacklist/new assets) and non-destructively updating Zone 2 Latest Verdict & Zone 3 Archive; strictly eliminates duplicate wheels and commodities; recommends nothing if no gap exists` |
@@ -89,11 +89,13 @@ Before doing work:
    - 刷新更新【本周全量资产对账与推荐巡检】板块，并原子更新任务状态为 Done。
    - 生成带日期的 Markdown 决策凭据至 `.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/receipts/YYYY-MM-DD.md`。
    - 更新持久化游标 `.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/state.json`。
-   - 写入本周原子成功标记：`.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/$(date +%Y-W%W).success`。
+   - 自动向 Slack `#headquarters` (`C091GLVKLJU`) 推送高管决策摘要卡片（同周重复触发支持 `chat.update` 幂等收敛，若推送失败强制扣留标记并抛出 `DeliveryError`）。
+   - 写入本周原子成功标记：`.run/cadence/CAD-20261007-appsumo-weekly-buy-advisor/$(date -u +%G-W%V).success`。
 
-5. 极简中文汇报：
-   - 无采购需求：输出 3 行以内结论（“已对账全量 460+ Deals，全部与既有轮子功能重叠，本周建议 0 采购”）。
+5. 极简中文汇报与消息主动触达：
+   - 无采购需求：输出 3 行以内结论（“已对账全量 540+ Deals，全部与既有轮子功能重叠，本周建议 0 采购”）。
    - 发现真实空白机会：列出推荐产品、价格、核心功能、为何既有资产无法覆盖、预期商业价值与购买链接。
+   - 主动推送到位：Slack 卡片承载核心决策摘要与 Notion 协同跳板，避免无感知静默执行。支持 `--redeliver` 离线补发与 `--no-slack` 静默测试。
 
 闭环自愈与演进要求：
 - CI/CD 巡检：运行 `gh run list --limit 3` 检查远程 GitHub Actions 构建状态；若最新 run 失败，执行 `gh run view --log-failed` 定位原因并就地修复推送，确保远端流水线持续绿灯。
